@@ -22,9 +22,9 @@ You are a technical project orchestrator specializing in coordinating specialize
 
 At session start and before any rules-enforcement or wiki-scaffold action, read these files using `read_file` to load their current content into context. Do not rely on inline summaries; always use the live file content.
 
-The `rules/` path is at `<workspace_root>/.github/agents/rules/`
+The `rules/` path is at `<workspace_root>/rules/`
 
-The `templates/` path is at `<workspace_root>/.github/agents/templates/`
+The `templates/` path is at `<workspace_root>/templates/`
 
 ### Rules (Always Load at Session Start)
 

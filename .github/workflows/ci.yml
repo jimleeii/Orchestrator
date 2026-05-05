@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run unit tests
+        run: |
+          python -m unittest discover -v
+
+      - name: Lint with ruff (optional)
+        run: |
+          if command -v ruff >/dev/null 2>&1; then
+            ruff check . || true
+          else
+            echo "ruff not installed; skipping lint step"
+          fi

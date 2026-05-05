@@ -1,0 +1,56 @@
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+pip-wheel-metadata/
+
+# Virtualenv / env
+venv/
+.venv/
+env/
+ENV/
+.env
+.env.*
+
+# VSCode
+.vscode/
+.history/
+
+# Node
+node_modules/
+
+# JetBrains
+.idea/
+
+# Coverage, testing
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Editor temporary files
+*.swp
+*.swo
+*.tmp
+
+# Keys and certs
+*.pem
+*.key
+
+# Misc
+.python-version
+*.patch
