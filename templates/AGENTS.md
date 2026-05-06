@@ -81,8 +81,6 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 This repository follows the AGENTS.md template recommendations and Karpathy behavioral guidelines. Use this quick appendix when authoring or updating agent instructions.
 
-Use this appendix as a quick reminder; keep the main sections specific and actionable for agents.
-
 - **AGENTS.md quick template:**
   - **Project overview:** short purpose and key tech.
   - **Setup commands:** exact install/build/test commands agents can run.
