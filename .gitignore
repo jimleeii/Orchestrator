@@ -54,3 +54,11 @@ htmlcov/
 # Misc
 .python-version
 *.patch
+
+# Workspace settings
+.wiki/
+plans/
+reviews/
+scripts/
+src/
+tests/

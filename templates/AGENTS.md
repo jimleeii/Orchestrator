@@ -2,9 +2,6 @@
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
-Last updated: 2026-04-29 UTC
-Owner: DataExchange maintainers
-
 Table of contents
 
 - [1. Think Before Coding](#1-think-before-coding)
@@ -14,10 +11,6 @@ Table of contents
 - [Appendix: Agent template (quick) and Karpathy guidance](#appendix-agent-template-quick-and-karpathy-guidance)
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## Changelog
-
-- 2026-04-29: Added orchestrator / workspace initialization guidance, TOC, metadata header, PR/commit conventions, and verification checklist.
 
 ## 1. Think Before Coding
 
