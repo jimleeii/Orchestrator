@@ -181,4 +181,7 @@ Required artifacts:
 - Known limitations and follow-up actions
 - Commenting and Region compliance statement (confirm `rules/Comment.Policy.md` checklist satisfied for all changed `.cs` files)
 See `rules/Quality.Policy.md` for the subagent contracts, scoring rubric, acceptance gate, pre-finalization checklist, and automation guidance.
+
 ### Code Reviewer Contract
+
+See `rules/Quality.Policy.md` for the Code Reviewer contract, required artifacts, and scoring guidance.
