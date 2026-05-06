@@ -9,30 +9,30 @@ agents: ["Software Architect", "Senior Developer", "Code Reviewer"]
 
 ## Orchestrator Overview
 
-This file is an entry point that references the modular policy files in `rules/`.
+This file is an entry point that references the modular policy skills in `skills/*/SKILL.md`.
 
 Load the policy modules at session start and follow their guidance. Key policy files:
 
-- `rules/Core.Identity.md` — core settings, responsibilities, and subagent summaries (new)
-- `rules/Workflow.Policy.md` — decision logic, dispatch gates, workspace initialization, and logging (new)
-- `rules/Quality.Policy.md` — contracts, scoring rubric, acceptance and pre-finalization checks (new)
-- `rules/Model.Policy.md` — model selection and scoring (existing)
- - `rules/Policy.Precedence.md` — policy precedence and conflict resolution (new)
- - `rules/Runtime.Budget.md` — runtime budget controls and limits (new)
-- `rules/Routing.Policy.md` — routing and skill selection (existing)
-- `rules/Logging.Policy.md` — logging specifics (existing)
-- `rules/Workspace.Policy.md` — workspace initialization and wiki scaffolding (existing)
+- `skills/core-identity/SKILL.md` — core settings, responsibilities, and subagent summaries
+- `skills/workflow-policy/SKILL.md` — decision logic, dispatch gates, workspace initialization, and logging
+- `skills/quality-policy/SKILL.md` — contracts, scoring rubric, acceptance and pre-finalization checks
+- `skills/model-policy/SKILL.md` — model selection and scoring
+- `skills/policy-precedence/SKILL.md` — policy precedence and conflict resolution
+- `skills/runtime-budget/SKILL.md` — runtime budget controls and limits
+- `skills/routing-policy/SKILL.md` — routing and skill selection
+- `skills/logging-policy/SKILL.md` — logging specifics
+- `skills/workspace-policy/SKILL.md` — workspace initialization and wiki scaffolding
 
 When making orchestration decisions, always load the live content of these files via `read_file` rather than relying on summaries.
 
-If you need to make a targeted change to orchestration behavior, edit the appropriate `rules/*.md` file rather than expanding this top-level file.
+If you need to make a targeted change to orchestration behavior, edit the appropriate `skills/*/SKILL.md` file rather than expanding this top-level file.
 
 
 | File | Purpose |
 |---|---|
-| `rules/Comment.Policy.md` | C# commenting and `#region` standards; enforced by Senior Developer during implementation and by Code Reviewer during audit |
-| `rules/Markdown.Policy.md` | Markdown writing profile and alignment checklist applied to all Orchestrator-generated markdown |
-| `rules/Markdown.Rule.md` | Authoritative markdownlint rule definitions that back the alignment checklist |
+| `skills/comment-policy/SKILL.md` | C# commenting and `#region` standards; enforced by Senior Developer during implementation and by Code Reviewer during audit |
+| `skills/markdown-policy/SKILL.md` | Markdown writing profile and alignment checklist applied to all Orchestrator-generated markdown |
+| `skills/markdown-rule/SKILL.md` | Authoritative markdownlint rule definitions that back the alignment checklist |
 
 ### Templates (Load During Workspace Initialization)
 
@@ -69,9 +69,9 @@ Read each template file verbatim before copying it to a missing wiki target. Do 
 
 ## Model Assignment Policy
 
-Model assignment and detailed scoring behavior have been moved to `rules/Model.Policy.md`. Load that file at session start and follow its procedures for discovery, scoring, criticality enforcement, and escalation.
+Model assignment and detailed scoring behavior are defined in `skills/model-policy/SKILL.md`. Load that file at session start and follow its procedures for discovery, scoring, criticality enforcement, and escalation.
 
-See `rules/Model.Policy.md` for the full model-selection policy and examples.
+See `skills/model-policy/SKILL.md` for the full model-selection policy and examples.
 
 ## Skill Routing by Subagent Character
 
@@ -159,7 +159,7 @@ If a task maps to Specialized or Non-Core skills, prefer direct response (no dis
 
 ### Local Skills (discovery)
 
-Local skills should be discovered at runtime rather than maintained as a long static list. See `rules/Workspace.Policy.md` for discovery guidance, minimal canonical defaults, and logging requirements. At session start, query `%USERPROFILE%\\.copilot\\skills` to register available skills; fall back to the canonical defaults only when discovery is unavailable.
+Local skills should be discovered at runtime rather than maintained as a long static list. See `skills/workspace-policy/SKILL.md` for discovery guidance, minimal canonical defaults, and logging requirements. At session start, query `%USERPROFILE%\\.copilot\\skills` to register available skills; fall back to the canonical defaults only when discovery is unavailable.
 
 ### Software Architect Contract
 
@@ -179,9 +179,9 @@ Required artifacts:
 - Test evidence (what was run, what passed/failed, and gaps)
 - Error handling and rollback/guardrail notes
 - Known limitations and follow-up actions
-- Commenting and Region compliance statement (confirm `rules/Comment.Policy.md` checklist satisfied for all changed `.cs` files)
-See `rules/Quality.Policy.md` for the subagent contracts, scoring rubric, acceptance gate, pre-finalization checklist, and automation guidance.
+- Commenting and Region compliance statement (confirm `skills/comment-policy/SKILL.md` checklist satisfied for all changed `.cs` files)
+See `skills/quality-policy/SKILL.md` for the subagent contracts, scoring rubric, acceptance gate, pre-finalization checklist, and automation guidance.
 
 ### Code Reviewer Contract
 
-See `rules/Quality.Policy.md` for the Code Reviewer contract, required artifacts, and scoring guidance.
+See `skills/quality-policy/SKILL.md` for the Code Reviewer contract, required artifacts, and scoring guidance.

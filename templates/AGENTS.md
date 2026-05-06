@@ -101,5 +101,5 @@ Local Copilot skills discovery: Agents can reference locally installed Copilot s
 
 ## Orchestrator Agent (When using)
 
-> - Use all rules from `.github/agents/rules/` folder
+> - Use all policy skills from `skills/*/SKILL.md`
 > - Use all templates from `.github/agents/templates/` folder
