@@ -81,6 +81,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 This repository follows the AGENTS.md template recommendations and Karpathy behavioral guidelines. Use this quick appendix when authoring or updating agent instructions.
 
+Use this appendix as a quick reminder; keep the main sections specific and actionable for agents.
+
 - **AGENTS.md quick template:**
   - **Project overview:** short purpose and key tech.
   - **Setup commands:** exact install/build/test commands agents can run.
@@ -98,3 +100,8 @@ This repository follows the AGENTS.md template recommendations and Karpathy beha
 Use this appendix as a quick reminder; keep the main sections above specific and actionable for agents. When in doubt, prefer short, tested commands and explicit verification steps.
 
 Local Copilot skills discovery: Agents can reference locally installed Copilot skills found at `%USERPROFILE%\\.copilot\\skills`. Consider these skill names when writing routing rules or workspace initialization logic.
+
+## Orchestrator Agent (When using)
+
+> - Use all rules from `.github/agents/rules/` folder
+> - Use all templates from `.github/agents/templates/` folder

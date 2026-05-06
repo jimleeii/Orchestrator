@@ -2,6 +2,8 @@
 title: "Orchestrator Core Identity & Settings"
 ---
 
+Purpose: Core orchestration identity settings and high-level responsibilities.
+
 ## Settings
 
 - **`max_orchestration_cycles`**: 3  # global ceiling to avoid infinite retry loops

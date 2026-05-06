@@ -15,6 +15,10 @@ Rules:
 - Keep behavior log entries compact; prefer checklist-style bullets and links to artifacts.
  - Persisted logging: All `full` logs and related artifacts (cycle transcripts, attachments, screenshots, policy-change records) MUST be written to the workspace root folder `.wiki/orchestrator/` and referenced from behavior log entries.
 
+Configuration:
+
+- `force_persist_all` (boolean): When `true`, override the logging level decision and treat every orchestration cycle as `full`, persisting artifacts to `.wiki/orchestrator/`. Default: `false`.
+
 Change process: Logging level changes are small, reversible edits to this file and should be noted in `.wiki/orchestrator/Runbook.md`. All logging artifacts created for `full` cycles should be stored under the `.wiki/orchestrator/` folder (workspace root).
 
 ```yaml
@@ -22,6 +26,9 @@ pseudocode_choose_logging_level: |
 	# Pseudocode: Determine logging verbosity for an orchestration cycle
 
 	function choose_logging_level(dispatch_path, event_flags):
+		# Configuration override
+		if config.get('force_persist_all'):
+			return 'full'
 		# event_flags may include: persistent_mode_change, tier_override, failure_detected
 		if event_flags.persistent_mode_change or event_flags.tier_override:
 			return 'full'
