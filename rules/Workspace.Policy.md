@@ -10,10 +10,7 @@ Key points:
 
 Skill discovery guidance
 
-- Prefer dynamic discovery of local skills at runtime instead of relying on a static, hand-maintained list. Dynamic discovery reduces bit-rot and avoids referencing removed or renamed skills.
-- At session start, query the user's skills folder (e.g., `%USERPROFILE%\\.copilot\\skills`) and register available skill names and metadata. Fall back to a minimal canonical list if discovery is unavailable.
-- Record discovered skills in the `Skill-Usage-Log.md` when used and periodically validate that referenced skills still exist before dispatch.
-- If a user or policy requires a fixed minimal skill set, document those critical defaults in `rules/Workspace.Policy.md` and keep them intentionally small.
+ At session start, query the external system folder `%USERPROFILE%\.copilot\skills` read-only as a source for skill usage logging and metadata validation. Do not treat it as repo/workspace content. Fall back to a minimal canonical list if discovery is unavailable.
 
 Minimal canonical defaults (examples — keep small):
 

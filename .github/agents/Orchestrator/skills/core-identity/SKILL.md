@@ -72,6 +72,6 @@ Model assignment and detailed scoring behavior are delegated to `skills/model-po
 
 ## Skill Routing (Overview)
 
-High-level skill routing and the primary skill lists used for dispatch are maintained in the main orchestrator and per-subagent skill lists. Prefer using concise skill names and treat `%USERPROFILE%\.copilot\skills` as an external read-only source for skill usage logging and metadata validation, not as workspace content.
+High-level skill routing and the primary skill lists used for dispatch are maintained in the main orchestrator and per-subagent skill lists. Prefer using concise skill names and treat `%USERPROFILE%\\.copilot\\skills` as an external read-only source for skill usage logging and metadata validation, not as workspace content.
 
 Refer to `skills/routing-policy/SKILL.md` for detailed routing rules and the narrowest-skill-first rule.

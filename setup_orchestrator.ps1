@@ -1,0 +1,208 @@
+# Setup script for the Orchestrator Copilot Chat agent.
+#
+# Extracts the agent ZIP or copies files into `.github/agents/Orchestrator`,
+# optionally unblocks files, sets PowerShell execution policy, creates a
+# Python virtual environment and installs `requirements.txt`, and can run a
+# smoke test using the included `scripts/handle_request.py` wrapper.
+#
+# Usage examples:
+#   .\setup_orchestrator.ps1 -Force -InstallDeps -SmokeTest
+
+[CmdletBinding()]
+param(
+    [string]$AgentZipPath = "Orchestrator.zip",
+    [string]$DestRoot = ".github/agents",
+    [string]$AgentName = "Orchestrator",
+    [switch]$Flatten,
+    [switch]$Force,
+    [switch]$RemoveDocs,
+    [switch]$InstallDeps,
+    [switch]$SmokeTest
+)
+
+function Write-Info($msg) { Write-Host "[INFO] $msg" -ForegroundColor Cyan }
+function Write-Warn($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
+function Write-Err($msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red }
+
+try {
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $RepoRoot = Resolve-Path (Join-Path $ScriptDir ".")
+    $RepoRoot = $RepoRoot.Path
+
+    Write-Info "Repo root: $RepoRoot"
+
+    # Resolve zip path relative to repo root when needed
+    $ZipCandidate = if ([System.IO.Path]::IsPathRooted($AgentZipPath)) { $AgentZipPath } else { Join-Path $RepoRoot $AgentZipPath }
+
+    $DestParent = Join-Path $RepoRoot $DestRoot
+    if ($Flatten) {
+        $FinalDest = $DestParent
+    } else {
+        $FinalDest = $DestParent
+    }
+
+    Write-Info "Destination: $FinalDest"
+
+    if (Test-Path $FinalDest) {
+        if ($Force) {
+            Write-Info "Removing existing destination ($FinalDest) because -Force was specified"
+            Remove-Item -Recurse -Force -LiteralPath $FinalDest
+        } else {
+            Write-Err "Destination already exists: $FinalDest. Use -Force to overwrite. Exiting."
+            exit 1
+        }
+    }
+
+    if (Test-Path $ZipCandidate) {
+        Write-Info "Found ZIP: $ZipCandidate. Extracting..."
+        if ($Flatten) {
+            $TempExtract = Join-Path $env:TEMP ("orch_extract_{0}" -f ([DateTime]::UtcNow.ToString("yyyyMMddHHmmss")))
+            New-Item -ItemType Directory -Force -Path $TempExtract | Out-Null
+            Expand-Archive -Path $ZipCandidate -DestinationPath $TempExtract -Force
+
+            # If archive extracted a single top-level folder, copy its children into DestParent
+            $children = Get-ChildItem -LiteralPath $TempExtract
+            if ($children.Count -eq 1 -and $children[0].PSIsContainer) {
+                New-Item -ItemType Directory -Force -Path $DestParent | Out-Null
+                Write-Info "Flattening contents into $DestParent"
+                Copy-Item -Path (Join-Path $children[0].FullName '*') -Destination $DestParent -Recurse -Force
+            } else {
+                New-Item -ItemType Directory -Force -Path $DestParent | Out-Null
+                Copy-Item -Path (Join-Path $TempExtract '*') -Destination $DestParent -Recurse -Force
+            }
+
+            Remove-Item -Recurse -Force $TempExtract
+        } else {
+            # Extract to parent so the archive's top-level folder (e.g., Orchestrator) is created under DestParent
+            New-Item -ItemType Directory -Force -Path $DestParent | Out-Null
+            Expand-Archive -Path $ZipCandidate -DestinationPath $DestParent -Force
+
+            # Determine the actual final destination directory where the agent files were extracted.
+            # Prefer a folder named as the agent ($AgentName) if present; otherwise try to find a
+            # recently modified directory that contains expected files (scripts/ or setup_orchestrator.ps1).
+            $candidate = Join-Path $DestParent $AgentName
+            if (Test-Path $candidate) {
+                $FinalDest = $candidate
+            } else {
+                $FinalDest = $null
+                $dirs = Get-ChildItem -Path $DestParent -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
+                foreach ($d in $dirs) {
+                    if (Test-Path (Join-Path $d.FullName 'scripts\handle_request.py') -or Test-Path (Join-Path $d.FullName 'setup_orchestrator.ps1')) {
+                        $FinalDest = $d.FullName
+                        break
+                    }
+                }
+                if (-not $FinalDest) { $FinalDest = $DestParent }
+            }
+        }
+    } else {
+        Write-Warn "ZIP not found at $ZipCandidate. Falling back to copying files from repository root."
+        New-Item -ItemType Directory -Force -Path $FinalDest | Out-Null
+
+        $itemsToCopy = @(
+            'orchestrator.agent.md', 'AGENTS.md', 'orchestrator-tools.md', 'requirements.txt', 'Orchestrator.md'
+        )
+        foreach ($it in $itemsToCopy) {
+            $src = Join-Path $RepoRoot $it
+            if (Test-Path $src) { Copy-Item -Path $src -Destination $FinalDest -Force }
+        }
+
+        foreach ($d in @('templates','skills','src','scripts')) {
+            $srcd = Join-Path $RepoRoot $d
+            if (Test-Path $srcd) { Copy-Item -Path $srcd -Destination $FinalDest -Recurse -Force }
+        }
+    }
+
+    if ($RemoveDocs) {
+        $docPath = Join-Path $FinalDest 'Orchestrator.md'
+        if (Test-Path $docPath) {
+            Remove-Item -Force $docPath
+            Write-Info "Removed $docPath"
+        }
+    }
+
+    # Unblock files on Windows (safe to call on non-Windows but may no-op)
+    try {
+        Write-Info "Unblocking files under $FinalDest"
+        Get-ChildItem -Path $FinalDest -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warn "Unblock operation failed or not supported on this platform: $_"
+    }
+
+    # Set PowerShell execution policy for the current user so .ps1 scripts can run
+    try {
+        Write-Info "Setting ExecutionPolicy CurrentUser to Bypass (no prompt)."
+        Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Bypass -Force
+    } catch {
+        Write-Warn "Failed to set execution policy: $_"
+    }
+
+    # Optionally install Python dependencies into a venv under the agent folder
+    if ($InstallDeps) {
+        # Locate a Python executable
+        $python = (Get-Command python -ErrorAction SilentlyContinue).Path
+        if (-not $python) { $python = (Get-Command py -ErrorAction SilentlyContinue).Path }
+        if (-not $python) { Write-Warn "No Python executable found on PATH. Skipping dependency installation." }
+        else {
+            $venvPath = Join-Path $FinalDest '.venv'
+            $venvPython = Join-Path $venvPath 'Scripts\python.exe'
+            if (-not (Test-Path $venvPython)) {
+                Write-Info "Creating venv at $venvPath"
+                & $python -m venv $venvPath
+            } else { Write-Info "Reusing existing venv at $venvPath" }
+
+            if (Test-Path $venvPython) {
+                Write-Info "Upgrading pip in venv"
+                & $venvPython -m pip install --upgrade pip | Out-Null
+
+                $req = Join-Path $FinalDest 'requirements.txt'
+                if (Test-Path $req) {
+                    Write-Info "Installing requirements from $req"
+                    & $venvPython -m pip install -r $req
+                } else {
+                    Write-Warn "No requirements.txt found at $req"
+                }
+            } else {
+                Write-Warn "Failed to create or find venv python. Skipping pip installs."
+            }
+        }
+    }
+
+    # Optional smoke test
+    if ($SmokeTest) {
+        Write-Info "Running smoke test via scripts/handle_request.py"
+        $handleScript = Join-Path $FinalDest 'scripts\handle_request.py'
+        if (-not (Test-Path $handleScript)) { Write-Err "handle_request.py not found at $handleScript. Skipping smoke test." }
+        else {
+            # Use venv python if available
+            $runner = $null
+            if ($InstallDeps -and (Test-Path (Join-Path $FinalDest '.venv\Scripts\python.exe'))) {
+                $runner = Join-Path $FinalDest '.venv\Scripts\python.exe'
+            } else {
+                $runner = (Get-Command python -ErrorAction SilentlyContinue).Path
+                if (-not $runner) { $runner = (Get-Command py -ErrorAction SilentlyContinue).Path }
+            }
+
+            if (-not $runner) { Write-Warn "No Python runner available for smoke test." }
+            else {
+                Push-Location $RepoRoot
+                try {
+                    $args = @('--prompt', 'orchestrator smoke test', '--user', 'setup', '--run-skill', 'contract-validator')
+                    Write-Info "Invoking: $runner $handleScript $($args -join ' ')"
+                    & $runner $handleScript @args
+                } finally { Pop-Location }
+            }
+        }
+    }
+
+    Write-Info "Setup complete. Reload VS Code / Copilot Chat to discover the new agent."
+    Write-Info "Agent installed at: $FinalDest"
+    Write-Host ""
+    Write-Info "If you installed dependencies, activate the venv with:" 
+    Write-Host "  . $FinalDest\.venv\Scripts\Activate.ps1" -ForegroundColor Green
+    Write-Info "Then run smoke test manually if you skipped -SmokeTest." 
+    exit 0
+} catch {
+    Write-Err "Setup failed: $_"
+    exit 2
+}

@@ -30,3 +30,46 @@ jobs:
           else
             echo "ruff not installed; skipping lint step"
           fi
+
+  verify_package:
+    name: Verify packaged manifest
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Build package
+        run: |
+          python -m pip install --upgrade pip
+          python package_orchestrator.py
+          ls -l Orchestrator.zip || true
+
+      - name: Validate skills_manifest.json inside package
+        run: |
+          python - <<'PY'
+import zipfile, json, sys
+zpath = 'Orchestrator.zip'
+try:
+    z = zipfile.ZipFile(zpath)
+except Exception as e:
+    print('Failed to open', zpath, e)
+    sys.exit(1)
+candidates = [n for n in z.namelist() if n.endswith('skills_manifest.json')]
+if not candidates:
+    print('ERROR: skills_manifest.json not found in package')
+    sys.exit(2)
+data = z.read(candidates[0]).decode('utf-8')
+try:
+    j = json.loads(data)
+except Exception as e:
+    print('ERROR: skills_manifest.json is not valid JSON:', e)
+    sys.exit(3)
+if not isinstance(j, dict) or len(j) == 0:
+    print('ERROR: skills_manifest.json is empty or contains no skills')
+    sys.exit(4)
+print('OK: skills_manifest.json found and contains', len(j), 'skills (sample keys:', list(j.keys())[:10], ')')
+PY
