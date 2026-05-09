@@ -1,9 +1,10 @@
 # Setup script for the Orchestrator Copilot Chat agent.
 #
 # Extracts the agent ZIP or copies files into `.github/agents/Orchestrator`,
-# optionally unblocks files, sets PowerShell execution policy, creates a
-# Python virtual environment and installs `requirements.txt`, and can run a
-# smoke test using the included `scripts/handle_request.py` wrapper.
+# installs prompt files into `.github/prompts`, optionally unblocks files,
+# sets PowerShell execution policy, creates a Python virtual environment and
+# installs `requirements.txt`, and can run a smoke test using the included
+# `scripts/handle_request.py` wrapper.
 #
 # Usage examples:
 #   .\setup_orchestrator.ps1 -Force -InstallDeps -SmokeTest
@@ -24,6 +25,38 @@ function Write-Info($msg) { Write-Host "[INFO] $msg" -ForegroundColor Cyan }
 function Write-Warn($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 function Write-Err($msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Install-PromptFolder {
+    param(
+        [Parameter(Mandatory = $true)] [string]$SourceRoot,
+        [Parameter(Mandatory = $true)] [string]$RepoRoot,
+        [switch]$RemoveSource,
+        [switch]$Force
+    )
+
+    $SourcePrompts = Join-Path $SourceRoot 'prompts'
+    if (-not (Test-Path $SourcePrompts)) {
+        Write-Warn "No prompts folder found at $SourcePrompts; skipping .github prompt install."
+        return
+    }
+
+    $GithubRoot = Join-Path $RepoRoot '.github'
+    $DestPrompts = Join-Path $GithubRoot 'prompts'
+
+    if ($Force -and (Test-Path $DestPrompts)) {
+        Remove-Item -Recurse -Force -LiteralPath $DestPrompts
+    }
+
+    New-Item -ItemType Directory -Force -Path $GithubRoot | Out-Null
+    New-Item -ItemType Directory -Force -Path $DestPrompts | Out-Null
+
+    Write-Info "Installing prompts to $DestPrompts"
+    Copy-Item -Path (Join-Path $SourcePrompts '*') -Destination $DestPrompts -Recurse -Force
+
+    if ($RemoveSource) {
+        Remove-Item -Recurse -Force -LiteralPath $SourcePrompts
+    }
+}
+
 try {
     $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $RepoRoot = Resolve-Path (Join-Path $ScriptDir ".")
@@ -35,6 +68,8 @@ try {
     $ZipCandidate = if ([System.IO.Path]::IsPathRooted($AgentZipPath)) { $AgentZipPath } else { Join-Path $RepoRoot $AgentZipPath }
 
     $DestParent = Join-Path $RepoRoot $DestRoot
+    $PromptSourceRoot = $RepoRoot
+    $RemovePromptSource = $false
     if ($Flatten) {
         $FinalDest = $DestParent
     } else {
@@ -94,6 +129,8 @@ try {
                 }
                 if (-not $FinalDest) { $FinalDest = $DestParent }
             }
+            $PromptSourceRoot = $FinalDest
+            $RemovePromptSource = $true
         }
     } else {
         Write-Warn "ZIP not found at $ZipCandidate. Falling back to copying files from repository root."
@@ -113,6 +150,8 @@ try {
         }
     }
 
+    Install-PromptFolder -SourceRoot $PromptSourceRoot -RepoRoot $RepoRoot -RemoveSource:$RemovePromptSource -Force:$Force
+
     if ($RemoveDocs) {
         $docPath = Join-Path $FinalDest 'Orchestrator.md'
         if (Test-Path $docPath) {
@@ -123,8 +162,12 @@ try {
 
     # Unblock files on Windows (safe to call on non-Windows but may no-op)
     try {
-        Write-Info "Unblocking files under $FinalDest"
-        Get-ChildItem -Path $FinalDest -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+        foreach ($pathToUnblock in @($FinalDest, (Join-Path $RepoRoot '.github\prompts'))) {
+            if (Test-Path $pathToUnblock) {
+                Write-Info "Unblocking files under $pathToUnblock"
+                Get-ChildItem -Path $pathToUnblock -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
+            }
+        }
     } catch {
         Write-Warn "Unblock operation failed or not supported on this platform: $_"
     }
