@@ -108,6 +108,7 @@ def log_cycle(
     target_root: Optional[Path] = None,
     tags: Optional[str] = None,
     preview: bool = False,
+    prompt_command: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """High-level orchestrator hook to persist logs according to policy.
 
@@ -129,6 +130,19 @@ def log_cycle(
     body = summary or ("(no summary provided)")
     if skills:
         body += "\n\nSkills: " + ", ".join(skills)
+
+    # If a specific prompt command was requested, run it directly.
+    if prompt_command:
+        proc = _run_log_command(repo_root, prompt_command, body, author=author, tags=tags, preview=preview, script_root=target_root)
+        transcript_path = None
+        if transcript and not preview:
+            transcript_path = write_transcript(repo_root, transcript)
+        return {
+            "level": level,
+            "command": prompt_command,
+            "returncode": str(proc.returncode),
+            "transcript": str(transcript_path) if transcript_path else None,
+        }
 
     if level == 'compact':
         # single-agent flows: record behavior + skill usage via `/info`
