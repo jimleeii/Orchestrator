@@ -152,6 +152,70 @@ try {
 
     Install-PromptFolder -SourceRoot $PromptSourceRoot -RepoRoot $RepoRoot -RemoveSource:$RemovePromptSource -Force:$Force
 
+    # Install hook config files (log_cycle.json, rtk-rewrite.json) into .github/hooks
+    try {
+        $GithubHooksDir = Join-Path $RepoRoot '.github\hooks'
+        New-Item -ItemType Directory -Force -Path $GithubHooksDir | Out-Null
+
+        # Debug: surface candidate source locations and contents to help diagnose packaging layout
+        Write-Info "Hook install: PromptSourceRoot = $PromptSourceRoot"
+        Write-Info "Hook install: RepoRoot = $RepoRoot"
+        try {
+            Write-Info "Listing PromptSourceRoot contents (top-level):"
+            Get-ChildItem -Path $PromptSourceRoot -ErrorAction SilentlyContinue | ForEach-Object { Write-Info "  $($_.FullName)" }
+        } catch {}
+        try {
+            Write-Info "Listing PromptSourceRoot\hooks contents:"
+            Get-ChildItem -Path (Join-Path $PromptSourceRoot 'hooks') -ErrorAction SilentlyContinue | ForEach-Object { Write-Info "  $($_.FullName)" }
+        } catch {}
+        try {
+            Write-Info "Listing RepoRoot files (root):"
+            Get-ChildItem -Path $RepoRoot -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Info "  $($_.Name)" }
+        } catch {}
+        try {
+            Write-Info "Listing RepoRoot\hooks contents:"
+            Get-ChildItem -Path (Join-Path $RepoRoot 'hooks') -ErrorAction SilentlyContinue | ForEach-Object { Write-Info "  $($_.FullName)" }
+        } catch {}
+
+        # Try multiple candidate source locations. Prefer PromptSourceRoot (extracted package),
+        # then fall back to the repository root so a local repo copy always installs hooks.
+        # Also check inside a 'hooks' subfolder which is commonly present in packaged agents.
+        $hookCandidates = @(
+            @{ name='log_cycle.json'; paths=@(
+                [System.IO.Path]::Combine($PromptSourceRoot, 'log_cycle.json'),
+                [System.IO.Path]::Combine($PromptSourceRoot, 'hooks', 'log_cycle.json'),
+                [System.IO.Path]::Combine($RepoRoot, 'log_cycle.json'),
+                [System.IO.Path]::Combine($RepoRoot, 'hooks', 'log_cycle.json')
+            ) },
+            @{ name='rtk-rewrite.json'; paths=@(
+                [System.IO.Path]::Combine($PromptSourceRoot, 'rtk-rewrite.json'),
+                [System.IO.Path]::Combine($PromptSourceRoot, 'hooks', 'rtk-rewrite.json'),
+                [System.IO.Path]::Combine($RepoRoot, 'rtk-rewrite.json'),
+                [System.IO.Path]::Combine($RepoRoot, 'hooks', 'rtk-rewrite.json')
+            ) }
+        )
+
+        foreach ($hc in $hookCandidates) {
+            $src = $null
+            foreach ($p in $hc.paths) {
+                Write-Info "Checking candidate path: $p"
+                if (Test-Path $p) { $src = $p; break }
+            }
+            if ($src) {
+                $dest = Join-Path $GithubHooksDir $hc.name
+                if (Test-Path $dest) {
+                    if ($Force) { Remove-Item -Force -LiteralPath $dest }
+                }
+                Copy-Item -Path $src -Destination $dest -Force
+                Write-Info "Installed hook: $dest (from $src)"
+            } else {
+                Write-Warn "Source $($hc.name) not found in expected locations; skipping hook install."
+            }
+        }
+    } catch {
+        Write-Warn "Failed to install hook files: $_"
+    }
+
     if ($RemoveDocs) {
         $docPath = Join-Path $FinalDest 'Orchestrator.md'
         if (Test-Path $docPath) {

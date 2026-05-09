@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Create Orchestrator.zip containing the agent files (top-level folder: Orchestrator).
 
-Includes: orchestrator.agent.md, orchestrator-tools.md, requirements.txt 
-and directories: prompts, templates, skills, src, scripts.
+Includes: orchestrator.agent.md, orchestrator-tools.md, requirements.txt, log_cycle.json, rtk-rewrite.json 
+and directories: hooks, prompts, templates, skills, src, scripts.
 Excludes cache artifacts such as __pycache__ and compiled Python files.
 """
 import os
@@ -34,9 +34,9 @@ dest = os.path.join(staging, "Orchestrator")
 os.makedirs(dest, exist_ok=True)
 
 files = [
-    'orchestrator.agent.md', 'orchestrator-tools.md', 'requirements.txt'
+    'orchestrator.agent.md', 'orchestrator-tools.md', 'requirements.txt', 'log_cycle.json', 'rtk-rewrite.json'
 ]
-dirs = ['prompts', 'templates', 'skills', 'src', 'scripts']
+dirs = ['hooks', 'prompts', 'templates', 'skills', 'src', 'scripts']
 
 for f in files:
     src = os.path.join(repo_root, f)
