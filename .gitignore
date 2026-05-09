@@ -57,8 +57,6 @@ htmlcov/
 
 # Workspace settings
 .wiki/
+docs/
 plans/
 reviews/
-scripts/
-src/
-tests/

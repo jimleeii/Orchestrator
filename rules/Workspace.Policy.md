@@ -8,6 +8,18 @@ Key points:
 - Workspace scaffold steps: verify `AGENTS.md`, create `.wiki/orchestrator/` files from templates when missing, and append a short scaffold summary to `Project-Context-Log.md`.
 - Do not overwrite existing template sources in `templates/`.
 
+Skill discovery guidance
+
+ At session start, query the external system folder `%USERPROFILE%\.copilot\skills` read-only as a source for skill usage logging and metadata validation. Do not treat it as repo/workspace content. Fall back to a minimal canonical list if discovery is unavailable.
+
+Minimal canonical defaults (examples — keep small):
+
+- `prompt-optimizer`
+- `verification-before-completion`
+- `requesting-code-review`
+- `writing-plans`
+
+
 Initialization guardrails:
 
 - Perform scaffold checks only on `workspace init` or first orchestration cycle.
