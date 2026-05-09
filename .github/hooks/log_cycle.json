@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "python scripts/log_hook_runner.py --phase pre --summary \"Pre-tool invocation\" --preview",
+        "cwd": ".",
+        "timeout": 5
+      }
+    ]
+  }
+}

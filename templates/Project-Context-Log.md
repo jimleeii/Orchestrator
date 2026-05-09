@@ -15,34 +15,8 @@ Short, descriptive project memory across orchestration runs.
 
 ## Entry Template
 
-### CTX-YYYYMMDD-XXX
-
-- Timestamp (UTC):
-- Project/Request:
-- Stage: kickoff | in_progress | checkpoint | completed | blocked
-- Summary:
-  - Completed:
-  - In Progress:
-  - Blockers/Risks:
-  - Next Action:
-- Routing/Policy Changes: mode_change=<yes|no> | override=<yes|no> | fallback=<yes|no>
-- Related: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx), [Runbook](Runbook.md#chg-yyyymmdd-xxx)
-
-```yaml
-entry_template: |
-  ### CTX-YYYYMMDD-XXX
-
-  - Timestamp (UTC):
-  - Project/Request:
-  - Stage: kickoff | in_progress | checkpoint | completed | blocked
-  - Summary:
-    - Completed:
-    - In Progress:
-    - Blockers/Risks:
-    - Next Action:
-  - Routing/Policy Changes: mode_change=<yes|no> | override=<yes|no> | fallback=<yes|no>
-  - Related: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx), [Runbook](Runbook.md#chg-yyyymmdd-xxx)
-```
+The project context entry template has been moved to `prompts/project-context.prompt.md`.
+Use that prompt to append concise project checkpoints to this file.
 
 Rules:
 

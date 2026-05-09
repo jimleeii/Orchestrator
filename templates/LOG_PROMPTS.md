@@ -2,6 +2,8 @@
 
 This document describes prompt-style commands that are exposed to Copilot Chat from `.github/prompts/*.prompt.md` and append timestamped entries to the repository template logs under the `templates/` folder.
 
+Note: Entry templates have been extracted into dedicated prompt files under the repository `prompts/` directory (for example, `prompts/behavior.prompt.md`). The `templates/` files now point to those prompt files instead of embedding YAML template blocks.
+
 Commands and target files
 - `/full-log` — Appends the entry to: `Behavior-Log.md`, `Behavior-Patterns.md`, `Learning-Backlog.md`, `Project-Context-Log.md`, `Runbook.md`, `Skill-Usage-Log.md`.
 - `/info` — Appends to: `Skill-Usage-Log.md`, `Behavior-Log.md`.

@@ -4,31 +4,7 @@ Recurring behavior signatures and what they indicate.
 
 ## Pattern Template
 
-### PAT-YYYYMMDD-XXX
-
-- Signal:
-- Frequency:
-- Impact:
-- Affected Subagent(s):
-- Likely Cause:
-- Proposed Policy Change:
-- Status: candidate | applied | rolled_back
-- Compaction Batch: CB-YYYYMMDD-XX
-- Evidence: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx)
-
-```yaml
-entry_template: |
-	### PAT-YYYYMMDD-XXX
-
-	- Signal:
-	- Frequency:
-	- Impact:
-	- Affected Subagent(s):
-	- Likely Cause:
-	- Proposed Policy Change:
-	- Status: candidate | applied | rolled_back
-	- Compaction Batch: CB-YYYYMMDD-XX
-	- Evidence: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx)
-```
+The pattern entry template has been moved to `prompts/patterns-log.prompt.md`.
+Use that prompt to append structured behavior patterns to this file.
 
 ---

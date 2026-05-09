@@ -8,30 +8,8 @@ Runbook entries are audit evidence and must mirror state-changing events, but ru
 
 ## Change Record Template
 
-### CHG-YYYYMMDD-XXX
-
-- Date:
-- Trigger Pattern:
-- Change Applied:
-- Expected Effect:
-- Validation Window:
-- Observed Result:
-- Decision: keep | revise | rollback
-- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx)
-
-```yaml
-entry_template: |
-	### CHG-YYYYMMDD-XXX
-
-	- Date:
-	- Trigger Pattern:
-	- Change Applied:
-	- Expected Effect:
-	- Validation Window:
-	- Observed Result:
-	- Decision: keep | revise | rollback
-	- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx)
-```
+The change-record template has been moved to `prompts/runbook.prompt.md`.
+Use that prompt to append structured change records to this file.
 
 ---
 
