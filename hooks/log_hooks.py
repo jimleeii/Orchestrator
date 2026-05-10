@@ -22,11 +22,12 @@ so the project keeps a single mapping of prompt-commands -> template files.
 """
 from __future__ import annotations
 
+import json
 import sys
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 TEMPLATES_DIR_NAME = ".wiki/orchestrator"
 
@@ -67,11 +68,21 @@ def choose_logging_level(dispatch_path: str, event_flags: Optional[Dict[str, boo
     return 'minimal'
 
 
-def _run_log_command(repo_root: Path, command: str, message: str, author: Optional[str] = None, tags: Optional[str] = None, preview: bool = False, script_root: Optional[Path] = None):
+def _run_log_command(
+    repo_root: Path,
+    command: str,
+    message: str = "",
+    author: Optional[str] = None,
+    tags: Optional[str] = None,
+    preview: bool = False,
+    script_root: Optional[Path] = None,
+    context: Optional[Dict[str, Any]] = None,
+):
     script = repo_root / 'scripts' / 'log_prompt.py'
     if not script.exists():
         raise FileNotFoundError(f"log_prompt.py not found at expected location: {script}")
-    cmd = [sys.executable, str(script), command, message]
+    payload = json.dumps(context, ensure_ascii=False) if context is not None else message
+    cmd = [sys.executable, str(script), command, payload]
     if author:
         cmd += ['--author', str(author)]
     if tags:
@@ -82,6 +93,147 @@ def _run_log_command(repo_root: Path, command: str, message: str, author: Option
         cmd += ['--preview']
     # Use run so exceptions propagate to callers for the orchestrator to handle
     return subprocess.run(cmd, check=True)
+
+
+def _build_log_context(
+    dispatch_path: str,
+    event_flags: Optional[Dict[str, bool]] = None,
+    summary: str = "",
+    skills: Optional[List[str]] = None,
+    prompt_command: Optional[str] = None,
+) -> Dict[str, Any]:
+    event_flags = event_flags or {}
+    now = datetime.now(timezone.utc).astimezone()
+    timestamp_utc = now.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+    date = now.strftime('%Y-%m-%d')
+    skills = skills or []
+    skills_text = ", ".join(skills) if skills else "-"
+    subagents_text = "Orchestrator"
+    invocation_reason = summary.strip() if summary.strip() else (prompt_command or "hook-triggered logging")
+    prompt_normalization = "performed" if any(skill.lower() == 'prompt-optimizer' for skill in skills) else "not applicable"
+    failure_detected = bool(event_flags.get('failure_detected'))
+    outcome = "revise" if failure_detected else "pass"
+    compaction_batch = f"CB-{now.strftime('%Y%m%d')}-01"
+
+    defaults: Dict[str, Any] = {
+        'timestamp_utc': timestamp_utc,
+        'date': date,
+        'request_type': 'chat-conversion',
+        'routing_path': dispatch_path,
+        'subagents': subagents_text,
+        'subagent': subagents_text,
+        'skills_used_ordered': skills_text,
+        'skills_used': skills_text,
+        'invocation_reason': invocation_reason,
+        'outcome_impact': 'positive' if skills else 'neutral',
+        'reuse_note': 'Use structured metadata payload for hook-driven logs.',
+        'prompt_normalization': prompt_normalization,
+        'model_selection': 'selected_model=unknown | task_type=orchestration-cycle | criticality=P2',
+        'routing_mode': 'persistent=adaptive-score-based | effective=adaptive-score-based | source=default',
+        'fallback_override': f"fallback_used={'yes' if event_flags.get('fallback_used') else 'no'} | fallback_reason={event_flags.get('fallback_reason', 'none')} | override_phrase={event_flags.get('override_phrase', 'none')}",
+        'contract_score': 'n/a',
+        'outcome': outcome,
+        'failure_mode': 'hook reported failure' if failure_detected else 'none',
+        'failure_mode_if_any': 'hook reported failure' if failure_detected else 'none',
+        'root_cause_hypothesis': 'template field mapping was incomplete',
+        'follow_up_action': 'Verify all template fields are populated from structured metadata.',
+        'signal': summary or prompt_command or 'hook-triggered template render',
+        'frequency': '1',
+        'impact': 'logging fields populated',
+        'affected_subagents': subagents_text,
+        'likely_cause': 'missing structured metadata path',
+        'proposed_policy_change': 'Render log templates from structured metadata payloads.',
+        'priority': 'medium',
+        'problem': 'blank template fields',
+        'proposed_change': 'Populate log templates from hook metadata.',
+        'scope': 'output-format',
+        'safety_check': 'preview render and hook-runner invocation',
+        'owner': 'Orchestrator',
+        'project_request': summary or 'full-log template verification',
+        'stage': 'checkpoint',
+        'summary': summary or 'Hook-triggered logging cycle',
+        'summary_completed': 'Structured fields are now available to the renderer.',
+        'summary_in_progress': 'Verifying hook-driven log output.',
+        'summary_blockers_risks': 'Upstream subagent capture still defaults to Orchestrator.',
+        'summary_next_action': 'Run the hook preview and confirm field population.',
+        'routing_policy_changes': 'mode_change=no | override=no | fallback=no',
+        'change_applied': summary or 'Structured full-log template rendering',
+        'expected_effect': 'Log templates receive populated field values.',
+        'validation_window': 'preview render and hook invocation',
+        'observed_result': 'Preview render should show populated fields.',
+        'decision': 'keep' if not failure_detected else 'revise',
+        'request_type_skill': 'chat-conversion',
+        'compaction_batch': compaction_batch,
+    }
+
+    return {
+        'defaults': defaults,
+        'targets': {
+            'Behavior-Log.md': {
+                'request_type': 'chat-conversion',
+                'subagent': subagents_text,
+                'model_selection': defaults['model_selection'],
+                'routing_mode': defaults['routing_mode'],
+                'fallback_override': defaults['fallback_override'],
+                'skills_used': skills_text,
+                'prompt_normalization': prompt_normalization,
+                'contract_score': defaults['contract_score'],
+                'outcome': outcome,
+                'failure_mode': defaults['failure_mode'],
+                'failure_mode_if_any': defaults['failure_mode_if_any'],
+                'root_cause_hypothesis': defaults['root_cause_hypothesis'],
+                'follow_up_action': defaults['follow_up_action'],
+                'compaction_batch': compaction_batch,
+            },
+            'Behavior-Patterns.md': {
+                'signal': defaults['signal'],
+                'frequency': defaults['frequency'],
+                'impact': defaults['impact'],
+                'affected_subagents': defaults['affected_subagents'],
+                'likely_cause': defaults['likely_cause'],
+                'proposed_policy_change': defaults['proposed_policy_change'],
+                'status': 'candidate',
+                'compaction_batch': compaction_batch,
+            },
+            'Learning-Backlog.md': {
+                'priority': defaults['priority'],
+                'problem': defaults['problem'],
+                'proposed_change': defaults['proposed_change'],
+                'scope': defaults['scope'],
+                'safety_check': defaults['safety_check'],
+                'owner': defaults['owner'],
+                'status': 'in_progress',
+            },
+            'Project-Context-Log.md': {
+                'project_request': defaults['project_request'],
+                'stage': defaults['stage'],
+                'summary': defaults['summary'],
+                'completed': defaults['summary_completed'],
+                'in_progress': defaults['summary_in_progress'],
+                'blockers_risks': defaults['summary_blockers_risks'],
+                'next_action': defaults['summary_next_action'],
+                'routing_policy_changes': defaults['routing_policy_changes'],
+            },
+            'Runbook.md': {
+                'date': date,
+                'trigger_pattern': prompt_command or 'hook-triggered logging',
+                'change_applied': defaults['change_applied'],
+                'expected_effect': defaults['expected_effect'],
+                'validation_window': defaults['validation_window'],
+                'observed_result': defaults['observed_result'],
+                'decision': defaults['decision'],
+            },
+            'Skill-Usage-Log.md': {
+                'request_type': 'chat-conversion',
+                'routing_path': dispatch_path,
+                'subagents': subagents_text,
+                'skills_used_ordered': skills_text,
+                'invocation_reason': invocation_reason,
+                'outcome_impact': defaults['outcome_impact'],
+                'reuse_note': defaults['reuse_note'],
+            },
+        },
+    }
 
 
 def write_transcript(repo_root: Path, transcript: str, prefix: str = 'transcript') -> Path:
@@ -131,9 +283,26 @@ def log_cycle(
     if skills:
         body += "\n\nSkills: " + ", ".join(skills)
 
+    context = _build_log_context(
+        dispatch_path=dispatch_path,
+        event_flags=event_flags,
+        summary=summary,
+        skills=skills,
+        prompt_command=prompt_command,
+    )
+
     # If a specific prompt command was requested, run it directly.
     if prompt_command:
-        proc = _run_log_command(repo_root, prompt_command, body, author=author, tags=tags, preview=preview, script_root=target_root)
+        proc = _run_log_command(
+            repo_root,
+            prompt_command,
+            body,
+            author=author,
+            tags=tags,
+            preview=preview,
+            script_root=target_root,
+            context=context,
+        )
         transcript_path = None
         if transcript and not preview:
             transcript_path = write_transcript(repo_root, transcript)
@@ -146,11 +315,29 @@ def log_cycle(
 
     if level == 'compact':
         # single-agent flows: record behavior + skill usage via `/info`
-        proc = _run_log_command(repo_root, '/info', body, author=author, tags=tags, preview=preview, script_root=target_root)
+        proc = _run_log_command(
+            repo_root,
+            '/info',
+            body,
+            author=author,
+            tags=tags,
+            preview=preview,
+            script_root=target_root,
+            context=context,
+        )
         return {"level": "compact", "command": "/info", "returncode": str(proc.returncode)}
 
     if level == 'full':
-        proc = _run_log_command(repo_root, '/full-log', body, author=author, tags=tags, preview=preview, script_root=target_root)
+        proc = _run_log_command(
+            repo_root,
+            '/full-log',
+            body,
+            author=author,
+            tags=tags,
+            preview=preview,
+            script_root=target_root,
+            context=context,
+        )
         transcript_path = None
         # Only write transcript when not in preview mode
         if transcript and not preview:

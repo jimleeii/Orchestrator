@@ -12,14 +12,11 @@ import json
 import sys
 
 import os
-import sys
 
 # Ensure repository root is on sys.path so `src` package is importable when run from scripts/
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-
-from src.orchestrator_runtime import handle_request
 
 
 def main(argv=None):
@@ -31,6 +28,9 @@ def main(argv=None):
     parser.add_argument("--skill-script", help="Specific script filename inside the skill folder to run")
     parser.add_argument("--run-script", help="Arbitrary repo script path to run (python/ps1/sh)")
     args = parser.parse_args(argv)
+
+    # Import here after ensuring repo root is on sys.path to satisfy linter
+    from src.orchestrator_runtime import handle_request
 
     result = handle_request(
         prompt=args.prompt,

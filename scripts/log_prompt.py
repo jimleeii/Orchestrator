@@ -12,13 +12,14 @@ entry.
 from __future__ import annotations
 
 import argparse
+import json
 import getpass
 import os
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 import textwrap
 import re
 
@@ -105,45 +106,139 @@ def ensure_file(path: Path):
         path.write_text(f"# {path.name}\n\n", encoding="utf-8")
 
 
-def _find_prompt_template(repo_root: Path, cmd_name: str) -> str | None:
-    """Find an `entry_template` block in prompts/<cmd_name>.prompt.md and return it dedented.
+def _normalize_label(label: str) -> str:
+    cleaned = label.lower().replace("/", "_")
+    cleaned = re.sub(r"[()]+", "", cleaned)
+    cleaned = re.sub(r"[^a-z0-9]+", "_", cleaned)
+    return re.sub(r"_+", "_", cleaned).strip("_")
 
-    Returns None if no template is found.
-    """
-    prompt_path = repo_root / 'prompts' / f"{cmd_name}.prompt.md"
-    if not prompt_path.exists():
+
+def _stringify_context_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(_stringify_context_value(item) for item in value if _stringify_context_value(item))
+    if isinstance(value, dict):
+        return ", ".join(f"{key}={_stringify_context_value(item)}" for key, item in value.items())
+    return str(value)
+
+
+def _parse_context_payload(message: str) -> tuple[str, Dict[str, Any] | None]:
+    stripped = message.strip()
+    if not stripped.startswith("{"):
+        return message, None
+    try:
+        payload = json.loads(stripped)
+    except Exception:
+        return message, None
+    if not isinstance(payload, dict):
+        return message, None
+    return "", payload
+
+
+def _context_for_target(context_payload: Dict[str, Any] | None, target_name: str) -> Dict[str, Any] | None:
+    if not context_payload:
         return None
-    text = prompt_path.read_text(encoding='utf-8')
-    # Locate 'entry_template:' and capture the following indented block or until a code fence
-    m = re.search(r'entry_template:\s*\|\s*\n', text)
+    if "defaults" in context_payload or "targets" in context_payload:
+        merged: Dict[str, Any] = {}
+        defaults = context_payload.get("defaults")
+        if isinstance(defaults, dict):
+            merged.update(defaults)
+        targets = context_payload.get("targets")
+        if isinstance(targets, dict):
+            target_context = targets.get(target_name)
+            if isinstance(target_context, dict):
+                merged.update(target_context)
+        return merged or None
+    return context_payload
+
+
+def _extract_entry_template(block_text: str) -> str | None:
+    """Extract and dedent the contents of an `entry_template: |` block."""
+    m = re.search(r'entry_template:\s*\|\s*\n', block_text)
     if not m:
         return None
-    start = m.end()
-    lines = text[start:].splitlines()
+    lines = block_text[m.end():].splitlines()
     collected = []
     for line in lines:
-        # stop at an unindented code fence marker
-        if line.strip().startswith('```'):
-            break
-        # collect indented lines (or blank lines)
         if line.startswith(' ') or line.startswith('\t') or line.strip() == '':
             collected.append(line)
             continue
-        # stop when encountering a non-indented non-blank line
         break
     if not collected:
         return None
     tpl = '\n'.join(collected)
-    tpl = textwrap.dedent(tpl)
-    return tpl.rstrip('\n')
+    return textwrap.dedent(tpl).rstrip('\n')
 
 
-def _render_template(template: str, message: str, author: str, tags: str | None = None) -> str:
+def _find_prompt_templates(repo_root: Path, cmd_name: str) -> tuple[Dict[str, str], str | None]:
+    """Find per-target prompt templates in prompts/<cmd_name>.prompt.md.
+
+    Returns a tuple of:
+    - mapping of target file name -> template text
+    - default template for prompt files that define a single template block
+    """
+    prompt_path = repo_root / 'prompts' / f"{cmd_name}.prompt.md"
+    if not prompt_path.exists():
+        return {}, None
+    text = prompt_path.read_text(encoding='utf-8')
+    lines = text.splitlines()
+    templates: Dict[str, str] = {}
+    default_template: str | None = None
+    current_target: str | None = None
+
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+
+        heading_match = re.fullmatch(r'(?:#{1,6}\s+)?`?(?P<target>[A-Za-z0-9_.-]+\.md)`?', stripped)
+        if heading_match:
+            current_target = heading_match.group('target')
+            i += 1
+            continue
+
+        if stripped.startswith('```'):
+            fence_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith('```'):
+                fence_lines.append(lines[i])
+                i += 1
+
+            tpl = _extract_entry_template('\n'.join(fence_lines))
+            if tpl:
+                if current_target:
+                    templates[current_target] = tpl
+                elif default_template is None:
+                    default_template = tpl
+                current_target = None
+
+            if i < len(lines) and lines[i].strip().startswith('```'):
+                i += 1
+            continue
+
+        i += 1
+
+    return templates, default_template
+
+
+def _render_template(
+    template: str,
+    message: str,
+    author: str,
+    tags: str | None = None,
+    context: Dict[str, Any] | None = None,
+) -> str:
     now = datetime.now(timezone.utc).astimezone()
     date = now.strftime('%Y%m%d')
     time = now.strftime('%H%M%S')
     iso = now.isoformat(timespec='seconds')
     utc = now.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+    context_values = {_normalize_label(str(key)): _stringify_context_value(value) for key, value in (context or {}).items()}
 
     tpl = template.replace('YYYYMMDD', date).replace('XXX', time)
     lines = tpl.splitlines()
@@ -152,30 +247,52 @@ def _render_template(template: str, message: str, author: str, tags: str | None 
     for line in lines:
         stripped = line.strip()
         low = stripped.lower()
+
         if low.startswith('###'):
             out_lines.append(line)
             continue
+
+        field_match = re.match(r'^(?P<indent>\s*-\s*)(?P<label>[^:]+):(?P<rest>.*)$', line)
+        if field_match:
+            label = field_match.group('label').strip()
+            norm_label = _normalize_label(label)
+
+            # Prefer structured context values when available.
+            value = context_values.get(norm_label, '')
+
+            if not value:
+                if norm_label == 'date':
+                    value = context_values.get('date', iso)
+                elif norm_label == 'timestamp_utc':
+                    value = context_values.get('timestamp_utc', utc)
+                elif norm_label == 'change_applied':
+                    value = context_values.get('change_applied', message)
+                    if value:
+                        inserted_change = True
+                elif norm_label == 'summary':
+                    value = context_values.get('summary', '')
+
+            if value:
+                if '\n' in value:
+                    out_lines.append(f"{field_match.group('indent')}{label}: |")
+                    for value_line in value.splitlines():
+                        out_lines.append(f"{field_match.group('indent').replace('- ', '  ')}{value_line}")
+                else:
+                    out_lines.append(f"{field_match.group('indent')}{label}: {value}")
+                continue
+
         if low.startswith('- date:'):
-            out_lines.append(f"- Date: {iso}")
+            out_lines.append(f"- Date: {context_values.get('date', iso)}")
             continue
         if low.startswith('- timestamp (utc):'):
-            out_lines.append(f"- Timestamp (UTC): {utc}")
+            out_lines.append(f"- Timestamp (UTC): {context_values.get('timestamp_utc', utc)}")
             continue
-        if 'change applied' in low or low.startswith('- change applied:'):
-            # Insert message; preserve multi-line
-            if '\n' in message:
-                out_lines.append('- Change Applied: |')
-                for mline in message.splitlines():
-                    out_lines.append('  ' + mline)
-            else:
-                out_lines.append(f"- Change Applied: {message}")
-            inserted_change = True
-            continue
+
+        # Keep the template line unchanged if no structured value is provided.
         out_lines.append(line)
 
-    if not inserted_change:
+    if not context_values and not inserted_change:
         out_lines.append('')
-        # add message at end
         out_lines.extend(message.splitlines())
 
     # Optionally add tags/author if not present in template
@@ -233,17 +350,21 @@ def main() -> int:
         print("No message provided; aborting.")
         return 1
 
+    message_body, context_payload = _parse_context_payload(msg)
+
     author = args.author or get_author(repo_root)
 
     entries: Dict[Path, str] = {}
-    # Attempt to find a prompt-based entry template for this command in prompts/
+    # Attempt to find prompt-based entry templates for this command in prompts/
     cmd_name = cmd_low.lstrip('/')
-    prompt_tpl = _find_prompt_template(repo_root, cmd_name)
+    prompt_templates, default_template = _find_prompt_templates(repo_root, cmd_name)
     for f in targets:
         path = templates_dir / f
         ensure_file(path)
+        prompt_tpl = prompt_templates.get(f) or default_template
         if prompt_tpl:
-            entry = _render_template(prompt_tpl, msg, author, args.tags)
+            target_context = _context_for_target(context_payload, f)
+            entry = _render_template(prompt_tpl, message_body, author, args.tags, context=target_context)
         else:
             entry = format_entry(cmd, author, msg, args.tags)
         entries[path] = entry

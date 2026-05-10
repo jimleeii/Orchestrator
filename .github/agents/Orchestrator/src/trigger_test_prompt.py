@@ -185,13 +185,13 @@ def append_skill_usage_log(
         f"### SKL-{entry_id}",
         "",
         f"- Timestamp (UTC): {ts}",
-        f"- Request Type: chat-conversion",
+        "- Request Type: chat-conversion",
         f"- Routing Path: {routing_path}",
         f"- Subagent(s): {subagents_text}",
         f"- Skills Used (ordered): {skills_text}",
         f"- Invocation Reason: {invocation_reason}",
-        f"- Outcome Impact: neutral",
-        f"- Reuse Note: Parsed from Copilot Chat input/output and runtime invocation events when available.",
+        "- Outcome Impact: neutral",
+        "- Reuse Note: Parsed from Copilot Chat input/output and runtime invocation events when available.",
         "",
     ]
     with open(log_path, "a", encoding="utf-8") as handle:
@@ -227,10 +227,10 @@ def append_behavior_log(wiki_root: str, prompt: str, user: str = "test-user"):
         f"### OBS-{entry_id}",
         "",
         f"- Timestamp (UTC): {ts}",
-        f"- Request Type: interactive-prompt",
+        "- Request Type: interactive-prompt",
         f"- User: {user}",
         f"- Prompt: |\n  {prompt}",
-        f"- Outcome: persisted-test",
+        "- Outcome: persisted-test",
         "",
     ]
     with open(bl_path, "a", encoding="utf-8") as f:

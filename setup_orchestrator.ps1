@@ -3,11 +3,11 @@
 # Extracts the agent ZIP or copies files into `.github/agents/Orchestrator`,
 # installs prompt files into `.github/prompts`, optionally unblocks files,
 # sets PowerShell execution policy, creates a Python virtual environment and
-# installs `requirements.txt`, and can run a smoke test using the included
-# `scripts/handle_request.py` wrapper.
+# installs `requirements.txt` by default, and can run a smoke test using the included
+# `scripts/handle_request.py` wrapper. Pass `-InstallDeps:$false` to skip dependency setup.
 #
 # Usage examples:
-#   .\setup_orchestrator.ps1 -Force -InstallDeps -SmokeTest
+#   .\setup_orchestrator.ps1 -Force -SmokeTest
 
 [CmdletBinding()]
 param(
@@ -157,26 +157,6 @@ try {
         $GithubHooksDir = Join-Path $RepoRoot '.github\hooks'
         New-Item -ItemType Directory -Force -Path $GithubHooksDir | Out-Null
 
-        # Debug: surface candidate source locations and contents to help diagnose packaging layout
-        Write-Info "Hook install: PromptSourceRoot = $PromptSourceRoot"
-        Write-Info "Hook install: RepoRoot = $RepoRoot"
-        try {
-            Write-Info "Listing PromptSourceRoot contents (top-level):"
-            Get-ChildItem -Path $PromptSourceRoot -ErrorAction SilentlyContinue | ForEach-Object { Write-Info "  $($_.FullName)" }
-        } catch {}
-        try {
-            Write-Info "Listing PromptSourceRoot\hooks contents:"
-            Get-ChildItem -Path (Join-Path $PromptSourceRoot 'hooks') -ErrorAction SilentlyContinue | ForEach-Object { Write-Info "  $($_.FullName)" }
-        } catch {}
-        try {
-            Write-Info "Listing RepoRoot files (root):"
-            Get-ChildItem -Path $RepoRoot -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Info "  $($_.Name)" }
-        } catch {}
-        try {
-            Write-Info "Listing RepoRoot\hooks contents:"
-            Get-ChildItem -Path (Join-Path $RepoRoot 'hooks') -ErrorAction SilentlyContinue | ForEach-Object { Write-Info "  $($_.FullName)" }
-        } catch {}
-
         # Try multiple candidate source locations. Prefer PromptSourceRoot (extracted package),
         # then fall back to the repository root so a local repo copy always installs hooks.
         # Also check inside a 'hooks' subfolder which is commonly present in packaged agents.
@@ -198,7 +178,6 @@ try {
         foreach ($hc in $hookCandidates) {
             $src = $null
             foreach ($p in $hc.paths) {
-                Write-Info "Checking candidate path: $p"
                 if (Test-Path $p) { $src = $p; break }
             }
             if ($src) {
@@ -210,6 +189,14 @@ try {
                 Write-Info "Installed hook: $dest (from $src)"
             } else {
                 Write-Warn "Source $($hc.name) not found in expected locations; skipping hook install."
+            }
+        }
+
+        foreach ($hookFile in @('log_cycle.json', 'rtk-rewrite.json')) {
+            $installedHook = Join-Path $FinalDest $hookFile
+            if (Test-Path $installedHook) {
+                Remove-Item -Force -LiteralPath $installedHook
+                Write-Info "Removed $hookFile from agent folder after installing .github/hooks copy"
             }
         }
     } catch {
@@ -244,8 +231,9 @@ try {
         Write-Warn "Failed to set execution policy: $_"
     }
 
-    # Optionally install Python dependencies into a venv under the agent folder
-    if ($InstallDeps) {
+    # Install Python dependencies into a venv under the agent folder by default.
+    $ShouldInstallDeps = $InstallDeps -or -not $PSBoundParameters.ContainsKey('InstallDeps')
+    if ($ShouldInstallDeps) {
         # Locate a Python executable
         $python = (Get-Command python -ErrorAction SilentlyContinue).Path
         if (-not $python) { $python = (Get-Command py -ErrorAction SilentlyContinue).Path }
@@ -283,8 +271,9 @@ try {
         else {
             # Use venv python if available
             $runner = $null
-            if ($InstallDeps -and (Test-Path (Join-Path $FinalDest '.venv\Scripts\python.exe'))) {
-                $runner = Join-Path $FinalDest '.venv\Scripts\python.exe'
+            $venvPython = Join-Path $FinalDest '.venv\Scripts\python.exe'
+            if (Test-Path $venvPython) {
+                $runner = $venvPython
             } else {
                 $runner = (Get-Command python -ErrorAction SilentlyContinue).Path
                 if (-not $runner) { $runner = (Get-Command py -ErrorAction SilentlyContinue).Path }
