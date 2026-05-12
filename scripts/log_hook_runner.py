@@ -18,7 +18,7 @@ from typing import Optional
 def find_repo_root(start: Optional[Path] = None) -> Path:
     p = Path(start or __file__).resolve()
     cur = p if p.is_dir() else p.parent
-    markers = (".wiki/orchestrator", "orchestrator.agent.md", ".git")
+    markers = ("AGENTS.md", ".git")
     for _ in range(20):
         for m in markers:
             if (cur / m).exists():
