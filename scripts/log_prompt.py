@@ -176,13 +176,13 @@ def _extract_entry_template(block_text: str) -> str | None:
 
 
 def _find_prompt_templates(repo_root: Path, cmd_name: str) -> tuple[Dict[str, str], str | None]:
-    """Find per-target prompt templates in prompts/<cmd_name>.prompt.md.
+    """Find per-target prompt templates in .github/prompts/<cmd_name>.prompt.md.
 
     Returns a tuple of:
     - mapping of target file name -> template text
     - default template for prompt files that define a single template block
     """
-    prompt_path = repo_root / 'prompts' / f"{cmd_name}.prompt.md"
+    prompt_path = repo_root / '.github' / 'prompts' / f"{cmd_name}.prompt.md"
     if not prompt_path.exists():
         return {}, None
     text = prompt_path.read_text(encoding='utf-8')

@@ -21,7 +21,7 @@ class TestLogPromptTemplates(unittest.TestCase):
     def test_full_log_uses_per_target_templates(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            prompts_dir = repo_root / 'prompts'
+            prompts_dir = repo_root / '.github' / 'prompts'
             prompts_dir.mkdir(parents=True, exist_ok=True)
             (prompts_dir / 'full-log.prompt.md').write_text(
                 textwrap.dedent(
@@ -63,7 +63,7 @@ class TestLogPromptTemplates(unittest.TestCase):
     def test_single_template_fallback_still_works(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            prompts_dir = repo_root / 'prompts'
+            prompts_dir = repo_root / '.github' / 'prompts'
             prompts_dir.mkdir(parents=True, exist_ok=True)
             (prompts_dir / 'runbook.prompt.md').write_text(
                 textwrap.dedent(
