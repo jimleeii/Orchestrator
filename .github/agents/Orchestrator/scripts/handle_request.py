@@ -24,10 +24,30 @@ def main(argv=None):
     parser.add_argument("--prompt", "-p", default="", help="Request prompt to persist")
     parser.add_argument("--user", "-u", default="runtime-user", help="User name")
     parser.add_argument("--dispatch", "-d", default="single-agent", help="Dispatch path")
+    parser.add_argument("--event-flags", help="Structured JSON event flags to influence logging decisions")
+    parser.add_argument("--metadata", help="Structured JSON metadata to carry into wiki log entries")
     parser.add_argument("--run-skill", help="Skill name to run a script from")
     parser.add_argument("--skill-script", help="Specific script filename inside the skill folder to run")
     parser.add_argument("--run-script", help="Arbitrary repo script path to run (python/ps1/sh)")
     args = parser.parse_args(argv)
+
+    event_flags = {}
+    if args.event_flags:
+        try:
+            event_flags = json.loads(args.event_flags)
+            if not isinstance(event_flags, dict):
+                raise ValueError("event flags must be a JSON object")
+        except Exception as exc:
+            parser.error(f"--event-flags must be a JSON object: {exc}")
+
+    metadata = {}
+    if args.metadata:
+        try:
+            metadata = json.loads(args.metadata)
+            if not isinstance(metadata, dict):
+                raise ValueError("metadata must be a JSON object")
+        except Exception as exc:
+            parser.error(f"--metadata must be a JSON object: {exc}")
 
     # Import here after ensuring repo root is on sys.path to satisfy linter
     from src.orchestrator_runtime import handle_request
@@ -39,6 +59,8 @@ def main(argv=None):
         run_skill=args.run_skill,
         skill_script_name=args.skill_script,
         run_script_path=args.run_script,
+        event_flags=event_flags,
+        metadata=metadata,
     )
 
     # Print JSON to stdout so callers can parse it if desired.

@@ -2,9 +2,10 @@
 """Run `hooks.log_hooks.log_cycle` from hook runner JSON configs.
 
 This small CLI is intended to be invoked by repository hook runners
-(e.g. `.github/hooks/*.json`) as a command. It maps a few simple
-arguments to `log_cycle()` so hooks can persist logs at pre/mid/post
-phases without shelling out to the markdown CLI directly.
+(e.g. `.github/hooks/*.json`) as a command. It maps simple arguments,
+structured metadata, and optional model-resolution inputs to `log_cycle()`
+so hooks can persist logs at pre/mid/post phases without shelling out to
+the markdown CLI directly.
 """
 from __future__ import annotations
 
@@ -12,7 +13,104 @@ import argparse
 import sys
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
+
+
+def _as_text_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(item).strip() for item in value]
+    else:
+        items = [str(value).strip()]
+    return [item for item in items if item]
+
+
+def _merge_unique_text_lists(*sources: Any) -> List[str]:
+    merged: List[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for item in _as_text_list(source):
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
+def _first_text(*sources: Any) -> Optional[str]:
+    for source in sources:
+        items = _as_text_list(source)
+        if items:
+            return items[0]
+    return None
+
+
+def _load_json_object(raw_value: Optional[str], label: str) -> Dict[str, Any]:
+    if not raw_value:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except Exception as exc:  # pragma: no cover - user input parsing
+        raise ValueError(f"Failed to parse {label}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return parsed
+
+
+def _build_dispatch_metadata(
+    metadata: Optional[Dict[str, Any]] = None,
+    subagent_name: Optional[str] = None,
+    spawn_payload: Optional[Dict[str, Any]] = None,
+    model_catalog: Optional[Dict[str, Dict[str, Any]]] = None,
+    global_default_model: Optional[str] = None,
+    minimum_tier: Optional[str] = None,
+) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    merged = dict(metadata or {})
+
+    inferred_subagent = _first_text(
+        subagent_name,
+        merged.get("subagent"),
+        merged.get("subagents"),
+        spawn_payload.get("name") if spawn_payload else None,
+        spawn_payload.get("subagent") if spawn_payload else None,
+    )
+    if inferred_subagent:
+        merged["subagent"] = inferred_subagent
+        merged["subagents"] = _merge_unique_text_lists(merged.get("subagents"), inferred_subagent)
+
+    model_resolution = None
+    if spawn_payload and model_catalog:
+        try:
+            from src.model_resolver import resolve_model_for_subagent
+        except Exception:
+            resolve_model_for_subagent = None
+
+        if resolve_model_for_subagent:
+            model_resolution = resolve_model_for_subagent(
+                spawn_payload=spawn_payload,
+                parent_context=merged,
+                model_catalog=model_catalog,
+                global_default_model=global_default_model or "",
+                minimum_tier=minimum_tier,
+            )
+            resolved_model = model_resolution.get("model")
+            if resolved_model:
+                merged["selected_model"] = resolved_model
+                merged["cycle_selected_model"] = resolved_model
+                merged["model"] = resolved_model
+            resolved_source = model_resolution.get("source")
+            if resolved_source:
+                merged["selected_model_source"] = resolved_source
+            if model_resolution.get("fallback_used") is not None:
+                merged["fallback_used"] = model_resolution["fallback_used"]
+            if model_resolution.get("fallback_reason"):
+                merged["fallback_reason"] = model_resolution["fallback_reason"]
+
+    return merged, model_resolution
 
 
 def find_repo_root(start: Optional[Path] = None) -> Path:
@@ -26,8 +124,7 @@ def find_repo_root(start: Optional[Path] = None) -> Path:
         if cur.parent == cur:
             break
         cur = cur.parent
-    resolved = Path(__file__).resolve()
-    return resolved.parents[4] if len(resolved.parents) > 4 else resolved.parents[1]
+    return Path(__file__).resolve().parents[1]
 
 
 def main() -> int:
@@ -43,13 +140,20 @@ def main() -> int:
     parser.add_argument("--tags", help="Comma-separated tags", default=None)
     parser.add_argument("--event-flags", help="JSON string of event flags (e.g. '{\"failure_detected\": true}')", default=None)
     parser.add_argument("--event-flags-file", help="Path to a JSON file containing event flags", default=None)
+    parser.add_argument("--metadata", help="JSON string of structured metadata to carry into logs", default=None)
+    parser.add_argument("--subagent-name", help="Subagent name to record in metadata", default=None)
+    parser.add_argument("--spawn-payload", help="JSON string describing the dispatch spawn payload", default=None)
+    parser.add_argument("--model-catalog", help="JSON string of allowed models and tiers", default=None)
+    parser.add_argument("--global-default-model", help="Global default model to use for resolution", default=None)
+    parser.add_argument("--minimum-tier", help="Minimum allowed model tier", default=None)
     parser.add_argument("--prompt-command", help="Optional prompt command to run (e.g. /runbook)", default=None)
     parser.add_argument("--root", help="Repository root (for testing)", default=None)
     args = parser.parse_args()
 
-    repo_root = Path(args.root) if args.root else find_repo_root(Path(__file__))
-    # Ensure repo root is on sys.path so `hooks` can be imported reliably
-    sys.path.insert(0, str(repo_root))
+    workspace_root = Path(args.root) if args.root else find_repo_root(Path(__file__))
+    orchestrator_root = workspace_root / ".github" / "agents" / "Orchestrator"
+    # Ensure the Orchestrator package root is on sys.path so `hooks` can be imported reliably
+    sys.path.insert(0, str(orchestrator_root))
 
     try:
         from hooks.log_hooks import log_cycle
@@ -91,16 +195,37 @@ def main() -> int:
             return 5
 
     try:
+        metadata = _load_json_object(args.metadata, "--metadata")
+        spawn_payload = _load_json_object(args.spawn_payload, "--spawn-payload")
+        model_catalog = _load_json_object(args.model_catalog, "--model-catalog")
+    except ValueError as e:  # pragma: no cover - user input parsing
+        print(e, file=sys.stderr)
+        return 6
+
+    metadata, model_resolution = _build_dispatch_metadata(
+        metadata=metadata,
+        subagent_name=args.subagent_name,
+        spawn_payload=spawn_payload,
+        model_catalog=model_catalog,
+        global_default_model=args.global_default_model,
+        minimum_tier=args.minimum_tier,
+    )
+
+    if model_resolution:
+        metadata["model_resolution"] = model_resolution
+
+    try:
         res = log_cycle(
             dispatch_path=args.dispatch_path,
             event_flags=event_flags,
             summary=args.summary,
             skills=skills or None,
+            metadata=metadata,
             transcript=transcript,
             force_persist_all=bool(args.force_persist),
             author=args.author,
-            root=repo_root,
-            target_root=None,
+            root=orchestrator_root,
+            target_root=workspace_root,
             tags=args.tags,
             preview=args.preview,
             prompt_command=args.prompt_command,

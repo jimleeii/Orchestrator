@@ -2,7 +2,7 @@ import argparse
 import os
 import re
 from datetime import datetime, timezone
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional, Sequence, Any
 
 from src.skill_loader import load_manifest
 from pathlib import Path
@@ -44,6 +44,9 @@ DEFAULT_SKILL_HINTS = (
     "reviewing-dotnet-code",
     "writing-csharp-code",
     "dotnet-csharp-async-patterns",
+    "csharp-pro",
+    "dotnet-framework-4-8-expert",
+    "dotnet-core-expert",
 )
 
 
@@ -62,6 +65,31 @@ def _load_repo_skill_names() -> list[str]:
         except Exception:
             continue
     return names
+
+
+def _as_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(',')]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(item).strip() for item in value]
+    else:
+        items = [str(value).strip()]
+    return [item for item in items if item]
+
+
+def _merge_unique_text_lists(*sources: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for item in _as_text_list(source):
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
 
 
 def _build_skill_catalog(explicit_skill_names: Iterable[str] = ()) -> list[str]:
@@ -140,7 +168,9 @@ def append_skill_usage_log(
     subagents: Optional[Sequence[str]] = None,
     explicit_skill_names: Iterable[str] = (),
     known_skill_names: Sequence[str] | None = None,
+    metadata: Optional[dict[str, Any]] = None,
 ) -> dict:
+    metadata = metadata or {}
     log_path = _ensure_skill_usage_log_header(wiki_root)
     usage = extract_skill_usage(
         prompt,
@@ -148,6 +178,8 @@ def append_skill_usage_log(
         explicit_skill_names=explicit_skill_names,
         known_skill_names=known_skill_names,
     )
+    metadata_skills = _merge_unique_text_lists(metadata.get("skills_used"), metadata.get("skills_used_ordered"))
+    usage["skills"] = _merge_unique_text_lists(usage.get("skills", []), metadata_skills)
 
     # If centralized hooks are available, prefer them to persist logs consistently.
     if _log_cycle:
@@ -157,6 +189,7 @@ def append_skill_usage_log(
                 event_flags={},
                 summary=prompt + ("\n\n" + output_text if output_text else ""),
                 skills=usage.get("skills", []),
+                metadata=metadata,
                 transcript=None,
                 force_persist_all=False,
                 author=user,
@@ -172,7 +205,7 @@ def append_skill_usage_log(
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     skills_text = ", ".join(usage["skills"]) if usage["skills"] else "-"
-    subagents_text = ", ".join(subagents) if subagents else "-"
+    subagents_text = ", ".join(_merge_unique_text_lists(subagents, metadata.get("subagents"), metadata.get("subagent"))) or "-"
     reason_bits = []
     if any(source == "input" for source in usage["sources"].values()):
         reason_bits.append("input transcript")
@@ -180,7 +213,9 @@ def append_skill_usage_log(
         reason_bits.append("output transcript")
     if explicit_skill_names:
         reason_bits.append("explicit runtime invocation")
-    invocation_reason = "parsed from " + ", ".join(reason_bits) if reason_bits else "no skill mentions detected"
+    if metadata.get("skills_used") or metadata.get("skills_used_ordered"):
+        reason_bits.append("structured metadata")
+    invocation_reason = metadata.get("invocation_reason") or ("parsed from " + ", ".join(reason_bits) if reason_bits else "no skill mentions detected")
     entry = [
         f"### SKL-{entry_id}",
         "",
@@ -199,7 +234,8 @@ def append_skill_usage_log(
     return {"path": log_path, **usage, "entry_id": f"SKL-{entry_id}"}
 
 
-def append_behavior_log(wiki_root: str, prompt: str, user: str = "test-user"):
+def append_behavior_log(wiki_root: str, prompt: str, user: str = "test-user", metadata: Optional[dict[str, Any]] = None):
+    metadata = metadata or {}
     bl_path = os.path.join(wiki_root, "Behavior-Log.md")
 
     # Prefer centralized hooks when available
@@ -210,6 +246,7 @@ def append_behavior_log(wiki_root: str, prompt: str, user: str = "test-user"):
                 event_flags={},
                 summary=prompt,
                 skills=None,
+                metadata=metadata,
                 transcript=None,
                 force_persist_all=False,
                 author=user,
@@ -223,12 +260,20 @@ def append_behavior_log(wiki_root: str, prompt: str, user: str = "test-user"):
 
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    subagent_text = metadata.get("subagent") or metadata.get("subagents") or "Orchestrator"
+    selected_model = metadata.get("selected_model") or metadata.get("cycle_selected_model") or metadata.get("model") or "unknown"
+    task_type = metadata.get("task_type") or "orchestration-cycle"
+    criticality = metadata.get("criticality") or "P2"
+    skills_text = ", ".join(_merge_unique_text_lists(metadata.get("skills_used"), metadata.get("skills_used_ordered"))) or "-"
     entry = [
         f"### OBS-{entry_id}",
         "",
         f"- Timestamp (UTC): {ts}",
-        "- Request Type: interactive-prompt",
+        f"- Request Type: {metadata.get('request_type') or 'interactive-prompt'}",
+        f"- Subagent: {subagent_text}",
+        f"- Model Selection: selected_model={selected_model} | task_type={task_type} | criticality={criticality}",
         f"- User: {user}",
+        f"- Skills Used: {skills_text}",
         f"- Prompt: |\n  {prompt}",
         "- Outcome: persisted-test",
         "",

@@ -3,7 +3,7 @@ import os
 import argparse
 import subprocess
 import sys
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 try:
     # When running as part of the package tests, import via the package name
@@ -11,6 +11,7 @@ try:
 except Exception:
     # Fallback for running the module directly from the repo root
     from trigger_test_prompt import append_behavior_log, append_skill_usage_log, write_transcript, extract_skill_usage
+from src.model_resolver import resolve_model_for_subagent
 from src.skill_loader import discover_skills, save_manifest
 
 
@@ -37,6 +38,61 @@ def choose_logging_level(dispatch_path: str, event_flags: dict, config: dict):
     return "minimal"
 
 
+def _as_text_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(item).strip() for item in value]
+    else:
+        items = [str(value).strip()]
+    return [item for item in items if item]
+
+
+def _merge_unique_text_lists(*sources: Any) -> List[str]:
+    merged: List[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for item in _as_text_list(source):
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
+def _merge_dispatch_metadata(
+    metadata: Optional[Dict[str, Any]] = None,
+    subagent_name: Optional[str] = None,
+    model_resolution: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    merged = dict(metadata or {})
+
+    if subagent_name:
+        merged["subagent"] = subagent_name
+        merged["subagents"] = _merge_unique_text_lists(merged.get("subagents"), subagent_name)
+
+    if model_resolution:
+        resolved_model = model_resolution.get("model")
+        if resolved_model:
+            merged["selected_model"] = resolved_model
+            merged["cycle_selected_model"] = resolved_model
+            merged["model"] = resolved_model
+
+        resolved_source = model_resolution.get("source")
+        if resolved_source:
+            merged["selected_model_source"] = resolved_source
+
+        if model_resolution.get("fallback_used") is not None:
+            merged["fallback_used"] = model_resolution["fallback_used"]
+        if model_resolution.get("fallback_reason"):
+            merged["fallback_reason"] = model_resolution["fallback_reason"]
+
+    return merged
+
+
 def persist_cycle(
     wiki_root: str,
     prompt: str,
@@ -45,6 +101,8 @@ def persist_cycle(
     output_text: str = "",
     dispatch_path: str = "single-agent",
     explicit_skill_names: Optional[List[str]] = None,
+    event_flags: Optional[Dict[str, bool]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ):
     # Use trigger_test_prompt.extract_skill_usage to compute structured skill usage
     # and delegate actual persistence to the centralized hooks (`hooks.log_hooks`)
@@ -55,8 +113,24 @@ def persist_cycle(
         # Best-effort: if hooks package isn't importable, fall back to previous behavior
         log_cycle = None
 
+    event_flags = dict(event_flags or {})
+    metadata = dict(metadata or {})
+
     # Parse skill usage from input/output without writing files
     skill_usage = extract_skill_usage(prompt, output_text or "", explicit_skill_names=explicit_skill_names or ())
+    merged_skills = _merge_unique_text_lists(
+        skill_usage.get("skills", []),
+        metadata.get("skills_used"),
+        metadata.get("skills_used_ordered"),
+    )
+    skill_usage = {
+        **skill_usage,
+        "skills": merged_skills,
+    }
+    sources = dict(skill_usage.get("sources", {}))
+    for skill_name in merged_skills:
+        sources.setdefault(skill_name, "metadata")
+    skill_usage["sources"] = sources
 
     if logging_level == "minimal":
         print("Minimal logging: no persisted artifacts")
@@ -67,9 +141,10 @@ def persist_cycle(
         transcript_text = output_text if logging_level == "full" else None
         result = log_cycle(
             dispatch_path=dispatch_path,
-            event_flags={},
+            event_flags=event_flags,
             summary=prompt,
-            skills=skill_usage.get("skills", []),
+            skills=merged_skills,
+            metadata=metadata,
             transcript=transcript_text,
             force_persist_all=False,
             author=user,
@@ -82,7 +157,7 @@ def persist_cycle(
 
     # Fallback behaviour: persist using legacy functions
     if logging_level == "full":
-        append_behavior_log(wiki_root, prompt, user=user)
+        append_behavior_log(wiki_root, prompt, user=user, metadata=metadata)
         skill_usage = append_skill_usage_log(
             wiki_root,
             prompt,
@@ -90,13 +165,14 @@ def persist_cycle(
             user=user,
             routing_path=dispatch_path,
             explicit_skill_names=explicit_skill_names or (),
+            metadata=metadata,
         )
         path = write_transcript(wiki_root, prompt, output_text=output_text, skill_usage=skill_usage)
         print(f"Persisted full artifacts (fallback): {path}")
         return skill_usage
 
     if logging_level == "compact":
-        append_behavior_log(wiki_root, prompt, user=user)
+        append_behavior_log(wiki_root, prompt, user=user, metadata=metadata)
         skill_usage = append_skill_usage_log(
             wiki_root,
             prompt,
@@ -104,6 +180,7 @@ def persist_cycle(
             user=user,
             routing_path=dispatch_path,
             explicit_skill_names=explicit_skill_names or (),
+            metadata=metadata,
         )
         print("Persisted compact behavior checkpoint (fallback)")
         return skill_usage
@@ -118,6 +195,8 @@ def main():
     parser.add_argument("--wiki", "-w", default=".wiki/orchestrator")
     parser.add_argument("--user", "-u", default="runtime-user")
     parser.add_argument("--dispatch", "-d", default="single-agent")
+    parser.add_argument("--event-flags", help="Structured JSON event flags to influence logging decisions")
+    parser.add_argument("--metadata", help="Structured JSON metadata to carry into wiki log entries")
     parser.add_argument("--discover-skills", action="store_true", help="Scan and write skills manifest")
     parser.add_argument("--manifest-path", default="skills/skills_manifest.json", help="Manifest output path")
     parser.add_argument("--run-script", help="Run a repository script (relative path)")
@@ -126,7 +205,19 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.wiki)
-    level = choose_logging_level(args.dispatch, {}, config)
+    try:
+        event_flags = json.loads(args.event_flags) if args.event_flags else {}
+        if not isinstance(event_flags, dict):
+            raise ValueError("event flags must be a JSON object")
+    except Exception as exc:
+        parser.error(f"--event-flags must be a JSON object: {exc}")
+    try:
+        metadata = json.loads(args.metadata) if args.metadata else {}
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata must be a JSON object")
+    except Exception as exc:
+        parser.error(f"--metadata must be a JSON object: {exc}")
+    level = choose_logging_level(args.dispatch, event_flags, config)
     print(f"Logging level chosen: {level}")
     os.makedirs(args.wiki, exist_ok=True)
 
@@ -148,7 +239,17 @@ def main():
         print(skill_output)
 
     output_text = "\n\n".join(part for part in [skill_output, script_output] if part)
-    persist_cycle(args.wiki, args.prompt, args.user, level, output_text=output_text, dispatch_path=args.dispatch, explicit_skill_names=[args.run_skill] if args.run_skill else None)
+    persist_cycle(
+        args.wiki,
+        args.prompt,
+        args.user,
+        level,
+        output_text=output_text,
+        dispatch_path=args.dispatch,
+        explicit_skill_names=[args.run_skill] if args.run_skill else None,
+        event_flags=event_flags,
+        metadata=metadata,
+    )
 
 
 def init_orchestrator(skills_dir: Optional[str] = None, manifest_path: Optional[str] = None) -> dict:
@@ -252,7 +353,8 @@ except Exception:
 
 def handle_request(prompt: str, user: str = "runtime-user", dispatch: str = "single-agent",
                    run_skill: Optional[str] = None, skill_script_name: Optional[str] = None,
-                   run_script_path: Optional[str] = None) -> dict:
+                   run_script_path: Optional[str] = None, event_flags: Optional[Dict[str, bool]] = None,
+                   metadata: Optional[Dict[str, Any]] = None) -> dict:
     """Handle an incoming request: persist artifacts and optionally run scripts.
 
     This is a lightweight runtime entry that Orchestrator agents can call to
@@ -260,7 +362,9 @@ def handle_request(prompt: str, user: str = "runtime-user", dispatch: str = "sin
     scripts. Returns a dict containing the persistence info and any script output.
     """
     config = load_config('.wiki/orchestrator')
-    level = choose_logging_level(dispatch, {}, config)
+    event_flags = dict(event_flags or {})
+    metadata = dict(metadata or {})
+    level = choose_logging_level(dispatch, event_flags, config)
     os.makedirs('.wiki/orchestrator', exist_ok=True)
     skill_output = None
     script_output = None
@@ -280,6 +384,8 @@ def handle_request(prompt: str, user: str = "runtime-user", dispatch: str = "sin
         output_text=output_text,
         dispatch_path=dispatch,
         explicit_skill_names=[run_skill] if run_skill else None,
+        event_flags=event_flags,
+        metadata=metadata,
     )
 
     result = {
@@ -288,6 +394,8 @@ def handle_request(prompt: str, user: str = "runtime-user", dispatch: str = "sin
         "skill_output": skill_output,
         "script_output": script_output,
         "skill_usage": skill_usage,
+        "event_flags": event_flags,
+        "metadata": metadata,
     }
 
     return result
@@ -295,30 +403,101 @@ def handle_request(prompt: str, user: str = "runtime-user", dispatch: str = "sin
 
 def prepare_dispatch_payload(prompt: str, user: str = "runtime-user", dispatch: str = "single-agent",
                                                          run_skill: Optional[str] = None, skill_script_name: Optional[str] = None,
-                                                         run_script_path: Optional[str] = None) -> dict:
+                                                         run_script_path: Optional[str] = None, event_flags: Optional[Dict[str, bool]] = None,
+                                                         metadata: Optional[Dict[str, Any]] = None, subagent_name: Optional[str] = None,
+                                                         model_resolution: Optional[Dict[str, Any]] = None,
+                                                         spawn_payload: Optional[Dict[str, Any]] = None,
+                                                         model_catalog: Optional[Dict[str, Dict[str, Any]]] = None,
+                                                         global_default_model: Optional[str] = None,
+                                                         minimum_tier: Optional[str] = None) -> dict:
         """Run persistence + optional skill/script and return a payload ready for dispatch.
 
         Returns a dict with keys:
             - `prompt`: the original prompt (normalized)
             - `parent_context`: dictionary with `persistence` (raw handle_request output)
             - `dispatch`: chosen dispatch path
+            - `subagent`: chosen subagent name when supplied
+            - `model_resolution`: resolved model metadata when supplied or auto-resolved
+            - `spawn_payload`: original spawn payload when supplied
 
         This helper centralizes the pre-dispatch steps so callers (CLI or other
         orchestrator code) can call it and pass the resulting payload to their
         subagent dispatch mechanism (e.g., `agent/runSubagent`).
         """
+        event_flags = dict(event_flags or {})
+        metadata = dict(metadata or {})
+        spawn_payload = dict(spawn_payload or {})
+
+        if not subagent_name:
+            subagent_name = _first_text(spawn_payload.get("name"), spawn_payload.get("subagent"), metadata.get("subagent"))
+
+        if model_resolution is None and spawn_payload and model_catalog and global_default_model:
+            model_resolution = resolve_model_for_subagent(
+                spawn_payload=spawn_payload,
+                parent_context=dict(metadata or {}),
+                model_catalog=model_catalog,
+                global_default_model=global_default_model,
+                minimum_tier=minimum_tier,
+            )
+
+        metadata = _merge_dispatch_metadata(metadata, subagent_name=subagent_name, model_resolution=model_resolution)
         persistence = handle_request(prompt=prompt, user=user, dispatch=dispatch,
-                                                                 run_skill=run_skill, skill_script_name=skill_script_name,
-                                                                 run_script_path=run_script_path)
+                                     run_skill=run_skill, skill_script_name=skill_script_name,
+                                     run_script_path=run_script_path,
+                                     event_flags=event_flags, metadata=metadata)
+
+        parent_context = {
+            "persistence": persistence,
+            # include manifest path reference where applicable
+            "skills_manifest": "skills/skills_manifest.json",
+            "event_flags": event_flags,
+            "dispatch_metadata": metadata,
+        }
+
+        if subagent_name:
+            parent_context["subagent"] = subagent_name
+        elif metadata.get("subagent"):
+            parent_context["subagent"] = metadata["subagent"]
+
+        if metadata.get("subagents"):
+            parent_context["subagents"] = metadata["subagents"]
+
+        if metadata.get("selected_model"):
+            parent_context["selected_model"] = metadata["selected_model"]
+
+        if metadata.get("cycle_selected_model"):
+            parent_context["cycle_selected_model"] = metadata["cycle_selected_model"]
+
+        if model_resolution is not None:
+            parent_context["model_resolution"] = model_resolution
+
+        if spawn_payload:
+            parent_context["spawn_payload"] = spawn_payload
+
+        for key in (
+            "selected_model",
+            "cycle_selected_model",
+            "subagent",
+            "subagents",
+            "skills_used",
+            "skills_used_ordered",
+            "task_type",
+            "criticality",
+            "prompt_normalization",
+            "contract_score",
+            "routing_mode",
+            "outcome",
+        ):
+            if key in metadata and metadata[key] is not None:
+                parent_context[key] = metadata[key]
 
         payload = {
                 "prompt": prompt,
                 "dispatch": dispatch,
-                "parent_context": {
-                        "persistence": persistence,
-                        # include manifest path reference where applicable
-                        "skills_manifest": "skills/skills_manifest.json",
-                },
+                "subagent": parent_context.get("subagent"),
+                "model_resolution": model_resolution,
+                "spawn_payload": spawn_payload or None,
+            "parent_context": parent_context,
         }
         return payload
 

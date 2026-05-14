@@ -46,6 +46,56 @@ def find_repo_root(start: Optional[Path] = None) -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _as_text_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(',')]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(item).strip() for item in value]
+    else:
+        items = [str(value).strip()]
+    return [item for item in items if item]
+
+
+def _merge_unique_text_lists(*sources: Any) -> List[str]:
+    merged: List[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for item in _as_text_list(source):
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged
+
+
+def _first_text(*values: Any, default: str = "") -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = value.strip() if isinstance(value, str) else str(value).strip()
+        if text:
+            return text
+    return default
+
+
+def _build_model_selection(metadata: Dict[str, Any]) -> str:
+    explicit_selection = _first_text(metadata.get('model_selection'))
+    if explicit_selection:
+        return explicit_selection
+    selected_model = _first_text(
+        metadata.get('selected_model'),
+        metadata.get('cycle_selected_model'),
+        metadata.get('model'),
+        default='unknown',
+    )
+    task_type = _first_text(metadata.get('task_type'), default='orchestration-cycle')
+    criticality = _first_text(metadata.get('criticality'), default='P2')
+    return f"selected_model={selected_model} | task_type={task_type} | criticality={criticality}"
+
+
 def choose_logging_level(dispatch_path: str, event_flags: Optional[Dict[str, bool]] = None, config: Optional[Dict[str, bool]] = None) -> str:
     """Choose logging level per `rules/Logging.Policy.md` pseudocode.
 
@@ -101,19 +151,67 @@ def _build_log_context(
     summary: str = "",
     skills: Optional[List[str]] = None,
     prompt_command: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     event_flags = event_flags or {}
+    metadata = metadata or {}
     now = datetime.now(timezone.utc).astimezone()
     timestamp_utc = now.astimezone(timezone.utc).replace(microsecond=0).isoformat()
     date = now.strftime('%Y-%m-%d')
-    skills = skills or []
+    metadata_skills = _merge_unique_text_lists(
+        metadata.get('skills_used'),
+        metadata.get('skills_used_ordered'),
+        metadata.get('skills'),
+    )
+    skills = _merge_unique_text_lists(skills or [], metadata_skills)
     skills_text = ", ".join(skills) if skills else "-"
-    subagents_text = "Orchestrator"
+    subagents = _merge_unique_text_lists(metadata.get('subagents'), metadata.get('subagent'))
+    if not subagents:
+        subagents = ["Orchestrator"]
+    subagents_text = ", ".join(subagents)
+    subagent_text = _first_text(metadata.get('subagent'), subagents_text, default='Orchestrator')
     invocation_reason = summary.strip() if summary.strip() else (prompt_command or "hook-triggered logging")
-    prompt_normalization = "performed" if any(skill.lower() == 'prompt-optimizer' for skill in skills) else "not applicable"
+    prompt_normalization = _first_text(
+        metadata.get('prompt_normalization'),
+        default="performed" if any(skill.lower() == 'prompt-optimizer' for skill in skills) else "not applicable",
+    )
     failure_detected = bool(event_flags.get('failure_detected'))
-    outcome = "revise" if failure_detected else "pass"
+    outcome = _first_text(metadata.get('outcome'), default="revise" if failure_detected else "pass")
     compaction_batch = f"CB-{now.strftime('%Y%m%d')}-01"
+    fallback_used_value = metadata.get('fallback_used')
+    if fallback_used_value is None:
+        fallback_used_value = event_flags.get('fallback_used')
+    fallback_reason_value = _first_text(
+        metadata.get('fallback_reason'),
+        event_flags.get('fallback_reason'),
+        default='none',
+    )
+    override_phrase_value = _first_text(
+        metadata.get('override_phrase'),
+        event_flags.get('override_phrase'),
+        default='none',
+    )
+    model_selection = _build_model_selection(metadata)
+    routing_mode = _first_text(
+        metadata.get('routing_mode'),
+        default='persistent=adaptive-score-based | effective=adaptive-score-based | source=default',
+    )
+    contract_score = _first_text(metadata.get('contract_score'), default='n/a')
+    failure_mode = _first_text(metadata.get('failure_mode'), default='hook reported failure' if failure_detected else 'none')
+    root_cause_hypothesis = _first_text(metadata.get('root_cause_hypothesis'), default='template field mapping was incomplete')
+    follow_up_action = _first_text(metadata.get('follow_up_action'), default='Verify all template fields are populated from structured metadata.')
+    project_request = _first_text(metadata.get('project_request'), default=summary or 'full-log template verification')
+    stage = _first_text(metadata.get('stage'), default='checkpoint')
+    summary_completed = _first_text(metadata.get('completed'), metadata.get('summary_completed'), default='Structured fields are now available to the renderer.')
+    summary_in_progress = _first_text(metadata.get('in_progress'), metadata.get('summary_in_progress'), default='Verifying hook-driven log output.')
+    summary_blockers_risks = _first_text(metadata.get('blockers_risks'), metadata.get('summary_blockers_risks'), default='No blockers')
+    summary_next_action = _first_text(metadata.get('next_action'), metadata.get('summary_next_action'), default='Run the hook preview and confirm field population.')
+    routing_policy_changes = _first_text(metadata.get('routing_policy_changes'), default='mode_change=no | override=no | fallback=no')
+    change_applied = _first_text(metadata.get('change_applied'), default=summary or 'Structured full-log template rendering')
+    expected_effect = _first_text(metadata.get('expected_effect'), default='Log templates receive populated field values.')
+    validation_window = _first_text(metadata.get('validation_window'), default='preview render and hook invocation')
+    observed_result = _first_text(metadata.get('observed_result'), default='Preview render should show populated fields.')
+    decision = _first_text(metadata.get('decision'), default='keep' if not failure_detected else 'revise')
 
     defaults: Dict[str, Any] = {
         'timestamp_utc': timestamp_utc,
@@ -121,22 +219,22 @@ def _build_log_context(
         'request_type': 'chat-conversion',
         'routing_path': dispatch_path,
         'subagents': subagents_text,
-        'subagent': subagents_text,
+        'subagent': subagent_text,
         'skills_used_ordered': skills_text,
         'skills_used': skills_text,
         'invocation_reason': invocation_reason,
         'outcome_impact': 'positive' if skills else 'neutral',
         'reuse_note': 'Use structured metadata payload for hook-driven logs.',
         'prompt_normalization': prompt_normalization,
-        'model_selection': 'selected_model=unknown | task_type=orchestration-cycle | criticality=P2',
-        'routing_mode': 'persistent=adaptive-score-based | effective=adaptive-score-based | source=default',
-        'fallback_override': f"fallback_used={'yes' if event_flags.get('fallback_used') else 'no'} | fallback_reason={event_flags.get('fallback_reason', 'none')} | override_phrase={event_flags.get('override_phrase', 'none')}",
-        'contract_score': 'n/a',
+        'model_selection': model_selection,
+        'routing_mode': routing_mode,
+        'fallback_override': f"fallback_used={'yes' if bool(fallback_used_value) else 'no'} | fallback_reason={fallback_reason_value} | override_phrase={override_phrase_value}",
+        'contract_score': contract_score,
         'outcome': outcome,
-        'failure_mode': 'hook reported failure' if failure_detected else 'none',
-        'failure_mode_if_any': 'hook reported failure' if failure_detected else 'none',
-        'root_cause_hypothesis': 'template field mapping was incomplete',
-        'follow_up_action': 'Verify all template fields are populated from structured metadata.',
+        'failure_mode': failure_mode,
+        'failure_mode_if_any': failure_mode,
+        'root_cause_hypothesis': root_cause_hypothesis,
+        'follow_up_action': follow_up_action,
         'signal': summary or prompt_command or 'hook-triggered template render',
         'frequency': '1',
         'impact': 'logging fields populated',
@@ -149,19 +247,19 @@ def _build_log_context(
         'scope': 'output-format',
         'safety_check': 'preview render and hook-runner invocation',
         'owner': 'Orchestrator',
-        'project_request': summary or 'full-log template verification',
-        'stage': 'checkpoint',
+        'project_request': project_request,
+        'stage': stage,
         'summary': summary or 'Hook-triggered logging cycle',
-        'summary_completed': 'Structured fields are now available to the renderer.',
-        'summary_in_progress': 'Verifying hook-driven log output.',
-        'summary_blockers_risks': 'Upstream subagent capture still defaults to Orchestrator.',
-        'summary_next_action': 'Run the hook preview and confirm field population.',
-        'routing_policy_changes': 'mode_change=no | override=no | fallback=no',
-        'change_applied': summary or 'Structured full-log template rendering',
-        'expected_effect': 'Log templates receive populated field values.',
-        'validation_window': 'preview render and hook invocation',
-        'observed_result': 'Preview render should show populated fields.',
-        'decision': 'keep' if not failure_detected else 'revise',
+        'completed': summary_completed,
+        'in_progress': summary_in_progress,
+        'blockers_risks': summary_blockers_risks,
+        'next_action': summary_next_action,
+        'routing_policy_changes': routing_policy_changes,
+        'change_applied': change_applied,
+        'expected_effect': expected_effect,
+        'validation_window': validation_window,
+        'observed_result': observed_result,
+        'decision': decision,
         'request_type_skill': 'chat-conversion',
         'compaction_batch': compaction_batch,
     }
@@ -208,10 +306,10 @@ def _build_log_context(
                 'project_request': defaults['project_request'],
                 'stage': defaults['stage'],
                 'summary': defaults['summary'],
-                'completed': defaults['summary_completed'],
-                'in_progress': defaults['summary_in_progress'],
-                'blockers_risks': defaults['summary_blockers_risks'],
-                'next_action': defaults['summary_next_action'],
+                'completed': defaults['completed'],
+                'in_progress': defaults['in_progress'],
+                'blockers_risks': defaults['blockers_risks'],
+                'next_action': defaults['next_action'],
                 'routing_policy_changes': defaults['routing_policy_changes'],
             },
             'Runbook.md': {
@@ -253,6 +351,7 @@ def log_cycle(
     event_flags: Optional[Dict[str, bool]] = None,
     summary: str = "",
     skills: Optional[List[str]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
     transcript: Optional[str] = None,
     force_persist_all: bool = False,
     author: Optional[str] = None,
@@ -274,21 +373,24 @@ def log_cycle(
     config = {"force_persist_all": bool(force_persist_all)}
     level = choose_logging_level(dispatch_path, event_flags or {}, config)
     repo_root = Path(root) if root else find_repo_root(None)
+    metadata = metadata or {}
+    effective_skills = _merge_unique_text_lists(skills or [], metadata.get('skills_used'), metadata.get('skills_used_ordered'))
 
     if level == 'minimal':
         return {"level": "minimal", "action": "none"}
 
     # Build a compact message body used for both compact and full
     body = summary or ("(no summary provided)")
-    if skills:
-        body += "\n\nSkills: " + ", ".join(skills)
+    if effective_skills:
+        body += "\n\nSkills: " + ", ".join(effective_skills)
 
     context = _build_log_context(
         dispatch_path=dispatch_path,
         event_flags=event_flags,
         summary=summary,
-        skills=skills,
+        skills=effective_skills,
         prompt_command=prompt_command,
+        metadata=metadata,
     )
 
     # If a specific prompt command was requested, run it directly.

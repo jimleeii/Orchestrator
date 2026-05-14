@@ -113,6 +113,18 @@ def _normalize_label(label: str) -> str:
     return re.sub(r"_+", "_", cleaned).strip("_")
 
 
+def _context_key_aliases(label: str) -> list[str]:
+    normalized = _normalize_label(label)
+    aliases = [normalized]
+
+    if normalized == "affected_subagent_s":
+        aliases.append("affected_subagents")
+    elif normalized == "subagent_s":
+        aliases.append("subagents")
+
+    return aliases
+
+
 def _stringify_context_value(value: Any) -> str:
     if value is None:
         return ""
@@ -240,7 +252,7 @@ def _render_template(
 
     context_values = {_normalize_label(str(key)): _stringify_context_value(value) for key, value in (context or {}).items()}
 
-    tpl = template.replace('YYYYMMDD', date).replace('XXX', time)
+    tpl = template.replace('YYYYMMDDHHMMSS', date + time).replace('YYYYMMDD', date).replace('HHMMSS', time).replace('XXX', time)
     lines = tpl.splitlines()
     out_lines: list[str] = []
     inserted_change = False
@@ -255,12 +267,13 @@ def _render_template(
         field_match = re.match(r'^(?P<indent>\s*-\s*)(?P<label>[^:]+):(?P<rest>.*)$', line)
         if field_match:
             label = field_match.group('label').strip()
-            norm_label = _normalize_label(label)
+            aliases = _context_key_aliases(label)
 
             # Prefer structured context values when available.
-            value = context_values.get(norm_label, '')
+            value = next((context_values.get(alias, '') for alias in aliases if context_values.get(alias, '')), '')
 
             if not value:
+                norm_label = aliases[0]
                 if norm_label == 'date':
                     value = context_values.get('date', iso)
                 elif norm_label == 'timestamp_utc':

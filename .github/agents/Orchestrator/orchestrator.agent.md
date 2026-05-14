@@ -27,6 +27,8 @@ When making orchestration decisions, always load the live content of these files
 
 If you need to make a targeted change to orchestration behavior, edit the appropriate `skills/*/SKILL.md` file rather than expanding this top-level file.
 
+> Note: the Orchestrator is designed to be a high-level coordinator and should NOT execute any tasks. It should ALWAYS dispatch to subagents for task execution. The Orchestrator may call helper scripts for persistence, logging, or lightweight validation, but all core work should be done by the specialized subagents.
+
 ### Runtime Integration
 
 The orchestrator runtime now performs a best-effort skill discovery at process start and exposes lightweight helpers that the Orchestrator can call to persist artifacts and execute local scripts.
@@ -34,7 +36,7 @@ The orchestrator runtime now performs a best-effort skill discovery at process s
 - **Implementation**: See [src/orchestrator_runtime.py](src/orchestrator_runtime.py) and [src/skill_loader.py](src/skill_loader.py).
 - **Auto-init behaviour**: On import/startup the runtime calls `init_orchestrator()` (unless `ORCHESTRATOR_SKIP_AUTOINIT` is set) to scan `skills/*/SKILL.md` and write `skills/skills_manifest.json`.
 - **Runtime APIs**:
-	- `handle_request(prompt, user, dispatch, run_skill, skill_script_name, run_script_path)` — persist logs/transcript and optionally run a skill script or arbitrary repo script. Returns a dict with `logging_level`, `manifest_summary`, `skill_output`, and `script_output`.
+	- `handle_request(prompt, user, dispatch, run_skill, skill_script_name, run_script_path, event_flags=None, metadata=None)` — persist logs/transcript and optionally run a skill script or arbitrary repo script. Returns a dict with `logging_level`, `manifest_summary`, `skill_output`, and `script_output`.
 	- `run_skill_script(skill_name, script_name=None)` — finds and runs the first `.py/.ps1/.sh` in `skills/<skill_name>/` or a specific script if `script_name` provided.
 
 Notes:
@@ -75,7 +77,21 @@ from src.orchestrator_runtime import prepare_dispatch_payload
 from agent_tools import run_subagent  # pseudo-api for the agent runtime
 
 # 1) normalize input (via prompt-optimizer) -> normalized_prompt
-payload = prepare_dispatch_payload(normalized_prompt, user='alice', dispatch='single-agent', run_skill='contract-validator')
+subagent_name = 'Senior Developer'
+spawn_payload = {'name': subagent_name}
+model_catalog = {'gpt-5.4-mini': {'tier': 'balanced'}}
+
+payload = prepare_dispatch_payload(
+	normalized_prompt,
+	user='alice',
+	dispatch='single-agent',
+	run_skill='contract-validator',
+	subagent_name=subagent_name,
+	spawn_payload=spawn_payload,
+	model_catalog=model_catalog,
+	global_default_model='gpt-5.4-mini',
+	metadata={'task_type': 'implementation', 'criticality': 'P1'},
+)
 
 # 2) include persistence info in subagent parent_context
 subagent_input = {
@@ -84,10 +100,16 @@ subagent_input = {
 }
 
 # 3) dispatch to subagent (pseudo call — adapt to your agent runtime)
-response = run_subagent(name='Senior Developer', payload=subagent_input)
+response = run_subagent(name=payload['subagent'], payload=subagent_input)
 
 # 4) after response, checkpoint it as well
-prepare_dispatch_payload(response['summary'], user='alice', dispatch='multi-agent')
+prepare_dispatch_payload(
+	response['summary'],
+	user='alice',
+	dispatch='multi-agent',
+	subagent_name=subagent_name,
+	metadata={'task_type': 'implementation', 'criticality': 'P1'},
+)
 ```
 
 If you cannot import the repo modules, call the CLI wrapper instead:
