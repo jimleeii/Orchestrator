@@ -19,7 +19,7 @@ Use the current conversation and selected text, if any, to infer the recurring p
 - Proposed Policy Change:
 - Status: candidate | applied | rolled_back
 - Compaction Batch: CB-YYYYMMDD-XX
-- Evidence: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx)
+- Evidence: [Behavior-Log](Behavior-Log.md#OBS-YYYYMMDD-XXX)
 
 ```yaml
 entry_template: |
@@ -33,5 +33,5 @@ entry_template: |
 	- Proposed Policy Change:
 	- Status: candidate | applied | rolled_back
 	- Compaction Batch: CB-YYYYMMDD-XX
-	- Evidence: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx)
+	- Evidence: [Behavior-Log](Behavior-Log.md#OBS-YYYYMMDD-XXX)
 ```

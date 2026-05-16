@@ -18,7 +18,7 @@ Use the current conversation and selected text, if any, to infer the change bein
 - Validation Window:
 - Observed Result:
 - Decision: keep | revise | rollback
-- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx)
+- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX)
 
 ```yaml
 entry_template: |
@@ -31,5 +31,5 @@ entry_template: |
 	- Validation Window:
 	- Observed Result:
 	- Decision: keep | revise | rollback
-	- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx)
+	- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX)
 ```
