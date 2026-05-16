@@ -20,7 +20,7 @@ Use the current conversation and selected text, if any, to infer the project che
   - Blockers/Risks:
   - Next Action:
 - Routing/Policy Changes: mode_change=<yes|no> | override=<yes|no> | fallback=<yes|no>
-- Related: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx), [Runbook](Runbook.md#chg-yyyymmdd-xxx)
+- Related: [Behavior-Log](Behavior-Log.md#OBS-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX), [Runbook](Runbook.md#CHG-YYYYMMDD-XXX)
 
 ```yaml
 entry_template: |
@@ -35,7 +35,7 @@ entry_template: |
     - Blockers/Risks:
     - Next Action:
   - Routing/Policy Changes: mode_change=<yes|no> | override=<yes|no> | fallback=<yes|no>
-  - Related: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx), [Runbook](Runbook.md#chg-yyyymmdd-xxx)
+  - Related: [Behavior-Log](Behavior-Log.md#OBS-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX), [Runbook](Runbook.md#CHG-YYYYMMDD-XXX)
 ```
 
 Rules:

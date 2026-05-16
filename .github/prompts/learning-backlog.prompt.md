@@ -18,7 +18,7 @@ Use the current conversation and selected text, if any, to infer the actionable 
 - Safety Check:
 - Owner: Orchestrator
 - Status: pending | in_progress | done | rolled_back
-- Linked Pattern: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx)
+- Linked Pattern: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX)
 
 ```yaml
 entry_template: |
@@ -31,5 +31,5 @@ entry_template: |
 	- Safety Check:
 	- Owner: Orchestrator
 	- Status: pending | in_progress | done | rolled_back
-	- Linked Pattern: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx)
+	- Linked Pattern: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX)
 ```

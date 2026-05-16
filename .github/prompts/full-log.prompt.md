@@ -33,7 +33,7 @@ entry_template: |
 	- Failure Mode (if any):
 	- Root Cause Hypothesis:
 	- Follow-up Action:
-	- Related: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx)
+	- Related: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX)
 	- Compaction Batch: CB-YYYYMMDD-XX
 ```
 
@@ -51,7 +51,7 @@ entry_template: |
 	- Proposed Policy Change:
 	- Status: candidate | applied | rolled_back
 	- Compaction Batch: CB-YYYYMMDD-XX
-	- Evidence: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx)
+	- Evidence: [Behavior-Log](Behavior-Log.md#OBS-YYYYMMDD-XXX)
 ```
 
 Learning-Backlog.md
@@ -67,7 +67,7 @@ entry_template: |
 	- Safety Check:
 	- Owner: Orchestrator
 	- Status: pending | in_progress | done | rolled_back
-	- Linked Pattern: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx)
+	- Linked Pattern: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX)
 ```
 
 Project-Context-Log.md
@@ -85,7 +85,7 @@ entry_template: |
     - Blockers/Risks:
     - Next Action:
   - Routing/Policy Changes: mode_change=<yes|no> | override=<yes|no> | fallback=<yes|no>
-  - Related: [Behavior-Log](Behavior-Log.md#obs-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx), [Runbook](Runbook.md#chg-yyyymmdd-xxx)
+	- Related: [Behavior-Log](Behavior-Log.md#OBS-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX), [Runbook](Runbook.md#CHG-YYYYMMDD-XXX)
 ```
 
 Runbook.md
@@ -101,7 +101,7 @@ entry_template: |
 	- Validation Window:
 	- Observed Result:
 	- Decision: keep | revise | rollback
-	- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx)
+	- Related Entries: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX)
 ```
 
 Skill-Usage-Log.md

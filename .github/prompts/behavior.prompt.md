@@ -26,7 +26,7 @@ entry_template: |
 	- Failure Mode (if any):
 	- Root Cause Hypothesis:
 	- Follow-up Action:
-	- Related: [Behavior-Patterns](Behavior-Patterns.md#pat-yyyymmdd-xxx), [Learning-Backlog](Learning-Backlog.md#lrn-yyyymmdd-xxx)
+	- Related: [Behavior-Patterns](Behavior-Patterns.md#PAT-YYYYMMDD-XXX), [Learning-Backlog](Learning-Backlog.md#LRN-YYYYMMDD-XXX)
 	- Compaction Batch: CB-YYYYMMDD-XX
 ```
 

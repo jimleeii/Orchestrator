@@ -252,7 +252,18 @@ def _render_template(
 
     context_values = {_normalize_label(str(key)): _stringify_context_value(value) for key, value in (context or {}).items()}
 
-    tpl = template.replace('YYYYMMDDHHMMSS', date + time).replace('YYYYMMDD', date).replace('HHMMSS', time).replace('XXX', time)
+    tpl = template
+    for token, value in (
+        ('YYYYMMDDHHMMSS', date + time),
+        ('yyyymmddhhmmss', date + time),
+        ('YYYYMMDD', date),
+        ('yyyymmdd', date),
+        ('HHMMSS', time),
+        ('hhmmss', time),
+        ('XXX', time),
+        ('xxx', time),
+    ):
+        tpl = tpl.replace(token, value)
     lines = tpl.splitlines()
     out_lines: list[str] = []
     inserted_change = False
