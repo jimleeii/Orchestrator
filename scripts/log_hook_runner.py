@@ -71,6 +71,9 @@ def _build_dispatch_metadata(
 ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     merged = dict(metadata or {})
 
+    if global_default_model:
+        merged.setdefault("global_default_model", global_default_model)
+
     inferred_subagent = _first_text(
         subagent_name,
         merged.get("subagent"),
@@ -109,6 +112,11 @@ def _build_dispatch_metadata(
                 merged["fallback_used"] = model_resolution["fallback_used"]
             if model_resolution.get("fallback_reason"):
                 merged["fallback_reason"] = model_resolution["fallback_reason"]
+
+    if global_default_model and not merged.get("selected_model"):
+        merged.setdefault("selected_model", global_default_model)
+        merged.setdefault("cycle_selected_model", global_default_model)
+        merged.setdefault("model", global_default_model)
 
     return merged, model_resolution
 

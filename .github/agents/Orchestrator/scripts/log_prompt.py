@@ -64,6 +64,23 @@ def find_repo_root(start: Path | None = None) -> Path:
     p = Path(start or __file__).resolve()
     cur = p if p.is_dir() else p.parent
     markers = (TEMPLATES_DIR_NAME, 'orchestrator.agent.md', '.git')
+    
+    # First pass: look for .git to find the true workspace root
+    git_root = None
+    for _ in range(20):
+        if (cur / '.git').exists():
+            git_root = cur
+            break
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    
+    if git_root:
+        return git_root
+    
+    # Fallback: if no .git found, look for other markers
+    cur = Path(start or __file__).resolve()
+    cur = cur if cur.is_dir() else cur.parent
     for _ in range(20):
         for m in markers:
             if (cur / m).exists():

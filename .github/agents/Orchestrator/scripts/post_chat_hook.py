@@ -222,6 +222,23 @@ def _extract_structured_payload(raw_text: str) -> tuple[str, Dict[str, Any]]:
     return transcript_text, payload
 
 
+def _merge_model_resolution_metadata(metadata: Dict[str, Any], model_resolution: Any) -> None:
+    if not isinstance(model_resolution, dict):
+        return
+    resolved_model = _coalesce_text(model_resolution.get("model"), model_resolution.get("selected_model"))
+    if resolved_model:
+        metadata.setdefault("selected_model", resolved_model)
+        metadata.setdefault("cycle_selected_model", resolved_model)
+        metadata.setdefault("model", resolved_model)
+    resolved_source = _coalesce_text(model_resolution.get("source"))
+    if resolved_source:
+        metadata.setdefault("selected_model_source", resolved_source)
+    if model_resolution.get("fallback_used") is not None:
+        metadata.setdefault("fallback_used", model_resolution["fallback_used"])
+    if model_resolution.get("fallback_reason"):
+        metadata.setdefault("fallback_reason", model_resolution["fallback_reason"])
+
+
 def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {}
 
@@ -240,6 +257,7 @@ def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
             nested_persistence_metadata = nested_persistence.get("metadata")
             if isinstance(nested_persistence_metadata, dict):
                 metadata.update(nested_persistence_metadata)
+        _merge_model_resolution_metadata(metadata, parent_context.get("model_resolution"))
         for key in (
             "subagent",
             "subagents",
@@ -307,6 +325,8 @@ def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
     ):
         if key in payload and key not in metadata:
             metadata[key] = payload[key]
+
+    _merge_model_resolution_metadata(metadata, payload.get("model_resolution"))
 
     return metadata
 

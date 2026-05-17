@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 TEMPLATES_DIR_NAME = ".wiki/orchestrator"
+DEFAULT_MODEL_ID = "gpt-5.4-mini"
 
 
 def find_repo_root(start: Optional[Path] = None) -> Path:
@@ -85,15 +86,30 @@ def _build_model_selection(metadata: Dict[str, Any]) -> str:
     explicit_selection = _first_text(metadata.get('model_selection'))
     if explicit_selection:
         return explicit_selection
-    selected_model = _first_text(
+
+    resolved_model = _first_text(
         metadata.get('selected_model'),
         metadata.get('cycle_selected_model'),
         metadata.get('model'),
-        default='unknown',
     )
+    model_resolution = metadata.get('model_resolution')
+    if isinstance(model_resolution, dict):
+        resolved_model = _first_text(
+            model_resolution.get('model'),
+            model_resolution.get('selected_model'),
+            resolved_model,
+        )
+    if not resolved_model:
+        resolved_model = _first_text(
+            metadata.get('global_default_model'),
+            metadata.get('default_model'),
+            metadata.get('runtime_model'),
+            default=DEFAULT_MODEL_ID,
+        )
+
     task_type = _first_text(metadata.get('task_type'), default='orchestration-cycle')
     criticality = _first_text(metadata.get('criticality'), default='P2')
-    return f"selected_model={selected_model} | task_type={task_type} | criticality={criticality}"
+    return f"selected_model={resolved_model} | task_type={task_type} | criticality={criticality}"
 
 
 def choose_logging_level(dispatch_path: str, event_flags: Optional[Dict[str, bool]] = None, config: Optional[Dict[str, bool]] = None) -> str:

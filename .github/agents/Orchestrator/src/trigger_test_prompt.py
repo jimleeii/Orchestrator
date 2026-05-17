@@ -261,7 +261,18 @@ def append_behavior_log(wiki_root: str, prompt: str, user: str = "test-user", me
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     subagent_text = metadata.get("subagent") or metadata.get("subagents") or "Orchestrator"
-    selected_model = metadata.get("selected_model") or metadata.get("cycle_selected_model") or metadata.get("model") or "unknown"
+    model_resolution = metadata.get("model_resolution")
+    selected_model = metadata.get("selected_model") or metadata.get("cycle_selected_model") or metadata.get("model")
+    if not selected_model and isinstance(model_resolution, dict):
+        selected_model = model_resolution.get("model") or model_resolution.get("selected_model")
+    if not selected_model:
+        selected_model = (
+            metadata.get("global_default_model")
+            or metadata.get("default_model")
+            or metadata.get("runtime_model")
+            or os.environ.get("ORCHESTRATOR_DEFAULT_MODEL")
+            or "gpt-5.4-mini"
+        )
     task_type = metadata.get("task_type") or "orchestration-cycle"
     criticality = metadata.get("criticality") or "P2"
     skills_text = ", ".join(_merge_unique_text_lists(metadata.get("skills_used"), metadata.get("skills_used_ordered"))) or "-"

@@ -78,8 +78,21 @@ from agent_tools import run_subagent  # pseudo-api for the agent runtime
 
 # 1) normalize input (via prompt-optimizer) -> normalized_prompt
 subagent_name = 'Senior Developer'
-spawn_payload = {'name': subagent_name}
-model_catalog = {'gpt-5.4-mini': {'tier': 'balanced'}}
+model_catalog = {
+	'gpt-4o-mini': {'tier': 'economy'},
+	'gpt-4o': {'tier': 'balanced'},
+	'claude-3-5-sonnet': {'tier': 'frontier'},
+	'gpt-5.4-mini': {'tier': 'balanced'},
+}
+
+def select_model(ctx):
+	if ctx.state.get('is_complex_task') or ctx.state.get('needs_review'):
+		return {'desired_tier': 'frontier'}
+	if ctx.state.get('is_iterative'):
+		return {'desired_tier': 'economy'}
+	return {'desired_tier': 'balanced'}
+
+spawn_payload = {'name': subagent_name, **select_model(ctx)}
 
 payload = prepare_dispatch_payload(
 	normalized_prompt,

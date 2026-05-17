@@ -63,6 +63,14 @@ def _merge_unique_text_lists(*sources: Any) -> List[str]:
     return merged
 
 
+def _first_text(*sources: Any) -> Optional[str]:
+    for source in sources:
+        items = _as_text_list(source)
+        if items:
+            return items[0]
+    return None
+
+
 def _merge_dispatch_metadata(
     metadata: Optional[Dict[str, Any]] = None,
     subagent_name: Optional[str] = None,
@@ -439,6 +447,12 @@ def prepare_dispatch_payload(prompt: str, user: str = "runtime-user", dispatch: 
                 global_default_model=global_default_model,
                 minimum_tier=minimum_tier,
             )
+
+        if global_default_model and not metadata.get("selected_model"):
+            metadata.setdefault("global_default_model", global_default_model)
+            metadata.setdefault("selected_model", global_default_model)
+            metadata.setdefault("cycle_selected_model", global_default_model)
+            metadata.setdefault("model", global_default_model)
 
         metadata = _merge_dispatch_metadata(metadata, subagent_name=subagent_name, model_resolution=model_resolution)
         persistence = handle_request(prompt=prompt, user=user, dispatch=dispatch,
