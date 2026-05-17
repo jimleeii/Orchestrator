@@ -187,6 +187,27 @@ def _extract_entry_template(block_text: str) -> str | None:
     return textwrap.dedent(tpl).rstrip('\n')
 
 
+def _normalize_internal_log_links(text: str) -> str:
+    """Normalize orchestrator wiki fragments so internal anchors stay consistent."""
+    internal_log_files = (
+        'Behavior-Log.md',
+        'Behavior-Patterns.md',
+        'Learning-Backlog.md',
+        'Project-Context-Log.md',
+        'Runbook.md',
+        'Skill-Usage-Log.md',
+    )
+
+    pattern = re.compile(
+        rf'(\[(?P<label>[^\]]+)\]\((?P<file>{"|".join(re.escape(name) for name in internal_log_files)})#)(?P<fragment>[^)]+)(\))'
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{match.group('fragment').lower()}{match.group(5)}"
+
+    return pattern.sub(replace, text)
+
+
 def _find_prompt_templates(repo_root: Path, cmd_name: str) -> tuple[Dict[str, str], str | None]:
     """Find per-target prompt templates in .github/prompts/<cmd_name>.prompt.md.
 
@@ -264,6 +285,7 @@ def _render_template(
         ('xxx', time),
     ):
         tpl = tpl.replace(token, value)
+    tpl = _normalize_internal_log_links(tpl)
     lines = tpl.splitlines()
     out_lines: list[str] = []
     inserted_change = False
