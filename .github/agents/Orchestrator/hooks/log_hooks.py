@@ -351,7 +351,11 @@ def _build_log_context(
 
 
 def write_transcript(repo_root: Path, transcript: str, prefix: str = 'transcript') -> Path:
-    transcripts_dir = repo_root / TEMPLATES_DIR_NAME / 'transcripts'
+    base_root = Path(repo_root)
+    if (base_root / 'Behavior-Log.md').exists() or (base_root / 'Home.md').exists():
+        transcripts_dir = base_root / 'transcripts'
+    else:
+        transcripts_dir = base_root / TEMPLATES_DIR_NAME / 'transcripts'
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).astimezone()
     ts = now.strftime('%Y%m%dT%H%M%S%z')
@@ -423,7 +427,7 @@ def log_cycle(
         )
         transcript_path = None
         if transcript and not preview:
-            transcript_path = write_transcript(repo_root, transcript)
+            transcript_path = write_transcript(Path(target_root) if target_root else repo_root, transcript)
         return {
             "level": level,
             "command": prompt_command,
@@ -459,7 +463,7 @@ def log_cycle(
         transcript_path = None
         # Only write transcript when not in preview mode
         if transcript and not preview:
-            transcript_path = write_transcript(repo_root, transcript)
+            transcript_path = write_transcript(Path(target_root) if target_root else repo_root, transcript)
         return {
             "level": "full",
             "command": "/full-log",
