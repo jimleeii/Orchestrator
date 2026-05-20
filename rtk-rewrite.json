@@ -8,5 +8,13 @@
         "timeout": 5
       }
     ]
-  }
+  },
+  "rewrites": [
+    {
+      "name": "wrap-powershell-cmdlets",
+      "matchRegex": "^(?:\\s*)(?:Move-Item|Copy-Item|Remove-Item|Set-Location|Get-ChildItem|New-Item)\\b",
+      "replacement": "pwsh -NoProfile -EncodedCommand {{BASE64(orig)}}",
+      "description": "Wrap common PowerShell cmdlets so they run inside pwsh; use base64-encoded command to avoid quoting problems."
+    }
+  ]
 }
