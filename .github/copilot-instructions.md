@@ -13,6 +13,7 @@ git log -10                rtk git log -10
 cargo test                 rtk cargo test
 docker ps                  rtk docker ps
 kubectl get pods           rtk kubectl pods
+pwsh                       rtk pwsh
 ```
 
 ## Meta commands (use directly)
