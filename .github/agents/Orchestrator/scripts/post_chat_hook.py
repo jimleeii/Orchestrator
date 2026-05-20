@@ -38,6 +38,49 @@ except Exception:  # pragma: no cover - fallback when package import is unavaila
     _extract_skill_usage = None
 
 
+def _score_transcript(text: str, subagent: str | None) -> str | None:
+    """Run src/score.py against *text* and return the score string (e.g. '83/100').
+
+    Returns None when the scorer is unavailable or the text is empty.
+    Role is inferred from *subagent* name; falls back to auto-detect.
+    """
+    if not text or not text.strip():
+        return None
+    _ROLE_MAP = {
+        "software architect": "architect",
+        "architect": "architect",
+        "senior developer": "developer",
+        "developer": "developer",
+        "code reviewer": "reviewer",
+        "reviewer": "reviewer",
+    }
+    role: str | None = None
+    if subagent:
+        role = _ROLE_MAP.get(subagent.strip().lower())
+
+    scorer = ORCHESTRATOR_ROOT / "src" / "score.py"
+    if not scorer.exists():
+        return None
+
+    cmd = [sys.executable, str(scorer)]
+    if role:
+        cmd += ["--role", role]
+    try:
+        result = subprocess.run(
+            cmd,
+            input=text,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        score = result.stdout.strip().splitlines()[0] if result.stdout.strip() else None
+        if score and "/" in score:
+            return score
+    except Exception:
+        pass
+    return None
+
+
 def _load_json_object(raw_value: Optional[str], label: str) -> Dict[str, Any]:
     if not raw_value:
         return {}
@@ -444,6 +487,15 @@ def main() -> int:
     summary = summary or "Chat session end"
     tags = tags or "copilot-chat"
     dispatch_path = dispatch_path or "single-agent"
+
+    # Score the transcript against the contract-validator checklist and inject
+    # the result into metadata before logging, but only when no upstream caller
+    # already set a real score.
+    if not metadata.get("contract_score"):
+        _subagent_for_score = metadata.get("subagent") or subagent_name
+        score_value = _score_transcript(transcript_text, _subagent_for_score)
+        if score_value:
+            metadata["contract_score"] = score_value
 
     transcript_path = None
     if transcript_payload:

@@ -358,7 +358,7 @@ def write_transcript(repo_root: Path, transcript: str, prefix: str = 'transcript
         transcripts_dir = base_root / TEMPLATES_DIR_NAME / 'transcripts'
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).astimezone()
-    ts = now.strftime('%Y%m%dT%H%M%S%z')
+    ts = now.strftime('%Y%m%dT%H%M%S-%f%z')
     filename = f"{prefix}-{ts}.md"
     path = transcripts_dir / filename
     header = f"# Transcript {now.isoformat(timespec='seconds')}\n\n"

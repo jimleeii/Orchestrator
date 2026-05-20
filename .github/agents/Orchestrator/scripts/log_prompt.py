@@ -344,6 +344,9 @@ def _render_template(
                     out_lines.append(f"{field_match.group('indent')}{label}: {value}")
                 continue
 
+            if norm_label == 'contract_score':
+                continue
+
         if low.startswith('- date:'):
             out_lines.append(f"- Date: {context_values.get('date', iso)}")
             continue
