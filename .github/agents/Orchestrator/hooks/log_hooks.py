@@ -27,6 +27,7 @@ import sys
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
+import re
 from typing import Optional, List, Dict, Any
 
 TEMPLATES_DIR_NAME = ".wiki/orchestrator"
@@ -83,10 +84,6 @@ def _first_text(*values: Any, default: str = "") -> str:
 
 
 def _build_model_selection(metadata: Dict[str, Any]) -> str:
-    explicit_selection = _first_text(metadata.get('model_selection'))
-    if explicit_selection:
-        return explicit_selection
-
     resolved_model = _first_text(
         metadata.get('selected_model'),
         metadata.get('cycle_selected_model'),
@@ -99,6 +96,20 @@ def _build_model_selection(metadata: Dict[str, Any]) -> str:
             model_resolution.get('selected_model'),
             resolved_model,
         )
+    explicit_selection = _first_text(metadata.get('model_selection'))
+    if explicit_selection and not resolved_model:
+        return explicit_selection
+
+    explicit_task_type = ""
+    explicit_criticality = ""
+    if explicit_selection:
+        task_match = re.search(r"task_type=([^|]+)", explicit_selection)
+        if task_match:
+            explicit_task_type = task_match.group(1).strip()
+        criticality_match = re.search(r"criticality=([^|]+)", explicit_selection)
+        if criticality_match:
+            explicit_criticality = criticality_match.group(1).strip()
+
     if not resolved_model:
         resolved_model = _first_text(
             metadata.get('global_default_model'),
@@ -106,9 +117,8 @@ def _build_model_selection(metadata: Dict[str, Any]) -> str:
             metadata.get('runtime_model'),
             default=DEFAULT_MODEL_ID,
         )
-
-    task_type = _first_text(metadata.get('task_type'), default='orchestration-cycle')
-    criticality = _first_text(metadata.get('criticality'), default='P2')
+    task_type = _first_text(metadata.get('task_type'), explicit_task_type, default='orchestration-cycle')
+    criticality = _first_text(metadata.get('criticality'), explicit_criticality, default='P2')
     return f"selected_model={resolved_model} | task_type={task_type} | criticality={criticality}"
 
 

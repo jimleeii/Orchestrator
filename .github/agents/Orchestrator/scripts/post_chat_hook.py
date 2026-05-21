@@ -268,18 +268,19 @@ def _extract_structured_payload(raw_text: str) -> tuple[str, Dict[str, Any]]:
 def _merge_model_resolution_metadata(metadata: Dict[str, Any], model_resolution: Any) -> None:
     if not isinstance(model_resolution, dict):
         return
+    metadata["model_resolution"] = dict(model_resolution)
     resolved_model = _coalesce_text(model_resolution.get("model"), model_resolution.get("selected_model"))
     if resolved_model:
-        metadata.setdefault("selected_model", resolved_model)
-        metadata.setdefault("cycle_selected_model", resolved_model)
-        metadata.setdefault("model", resolved_model)
+        metadata["selected_model"] = resolved_model
+        metadata["cycle_selected_model"] = resolved_model
+        metadata["model"] = resolved_model
     resolved_source = _coalesce_text(model_resolution.get("source"))
     if resolved_source:
-        metadata.setdefault("selected_model_source", resolved_source)
+        metadata["selected_model_source"] = resolved_source
     if model_resolution.get("fallback_used") is not None:
-        metadata.setdefault("fallback_used", model_resolution["fallback_used"])
+        metadata["fallback_used"] = model_resolution["fallback_used"]
     if model_resolution.get("fallback_reason"):
-        metadata.setdefault("fallback_reason", model_resolution["fallback_reason"])
+        metadata["fallback_reason"] = model_resolution["fallback_reason"]
 
 
 def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -82,21 +82,25 @@ def _merge_dispatch_metadata(
         merged["subagent"] = subagent_name
         merged["subagents"] = _merge_unique_text_lists(merged.get("subagents"), subagent_name)
 
-    if model_resolution:
-        resolved_model = model_resolution.get("model")
+    if isinstance(model_resolution, dict):
+        normalized = dict(model_resolution)
+        resolved_model = _first_text(normalized.get("model"), normalized.get("selected_model"))
         if resolved_model:
             merged["selected_model"] = resolved_model
             merged["cycle_selected_model"] = resolved_model
             merged["model"] = resolved_model
 
-        resolved_source = model_resolution.get("source")
+        resolved_source = _first_text(normalized.get("source"))
         if resolved_source:
             merged["selected_model_source"] = resolved_source
 
-        if model_resolution.get("fallback_used") is not None:
-            merged["fallback_used"] = model_resolution["fallback_used"]
-        if model_resolution.get("fallback_reason"):
-            merged["fallback_reason"] = model_resolution["fallback_reason"]
+        if normalized.get("fallback_used") is not None:
+            merged["fallback_used"] = normalized["fallback_used"]
+        fallback_reason = _first_text(normalized.get("fallback_reason"))
+        if fallback_reason:
+            merged["fallback_reason"] = fallback_reason
+
+        merged["model_resolution"] = normalized
 
     return merged
 

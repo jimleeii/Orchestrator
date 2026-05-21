@@ -92,6 +92,21 @@ def _merge_unique_text_lists(*sources: Any) -> list[str]:
     return merged
 
 
+def _resolved_model_id(metadata: dict[str, Any]) -> Optional[str]:
+    model_resolution = metadata.get("model_resolution")
+    if isinstance(model_resolution, dict):
+        resolved_model = model_resolution.get("model") or model_resolution.get("selected_model")
+        if isinstance(resolved_model, str) and resolved_model.strip():
+            return resolved_model.strip()
+
+    for key in ("selected_model", "cycle_selected_model", "model"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return None
+
+
 def _build_skill_catalog(explicit_skill_names: Iterable[str] = ()) -> list[str]:
     catalog: list[str] = []
     seen: set[str] = set()
@@ -261,10 +276,7 @@ def append_behavior_log(wiki_root: str, prompt: str, user: str = "test-user", me
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     entry_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     subagent_text = metadata.get("subagent") or metadata.get("subagents") or "Orchestrator"
-    model_resolution = metadata.get("model_resolution")
-    selected_model = metadata.get("selected_model") or metadata.get("cycle_selected_model") or metadata.get("model")
-    if not selected_model and isinstance(model_resolution, dict):
-        selected_model = model_resolution.get("model") or model_resolution.get("selected_model")
+    selected_model = _resolved_model_id(metadata)
     if not selected_model:
         selected_model = (
             metadata.get("global_default_model")

@@ -49,6 +49,32 @@ def _first_text(*sources: Any) -> Optional[str]:
     return None
 
 
+def _apply_model_resolution(metadata: Dict[str, Any], model_resolution: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(model_resolution, dict):
+        return None
+
+    normalized = dict(model_resolution)
+    resolved_model = _first_text(normalized.get("model"), normalized.get("selected_model"))
+    if resolved_model:
+        metadata["selected_model"] = resolved_model
+        metadata["cycle_selected_model"] = resolved_model
+        metadata["model"] = resolved_model
+
+    resolved_source = _first_text(normalized.get("source"))
+    if resolved_source:
+        metadata["selected_model_source"] = resolved_source
+
+    if normalized.get("fallback_used") is not None:
+        metadata["fallback_used"] = normalized["fallback_used"]
+
+    fallback_reason = _first_text(normalized.get("fallback_reason"))
+    if fallback_reason:
+        metadata["fallback_reason"] = fallback_reason
+
+    metadata["model_resolution"] = normalized
+    return normalized
+
+
 def _load_json_object(raw_value: Optional[str], label: str) -> Dict[str, Any]:
     if not raw_value:
         return {}
@@ -85,7 +111,7 @@ def _build_dispatch_metadata(
         merged["subagent"] = inferred_subagent
         merged["subagents"] = _merge_unique_text_lists(merged.get("subagents"), inferred_subagent)
 
-    model_resolution = None
+    model_resolution = _apply_model_resolution(merged, merged.get("model_resolution"))
     if spawn_payload and model_catalog:
         try:
             from src.model_resolver import resolve_model_for_subagent
@@ -100,18 +126,7 @@ def _build_dispatch_metadata(
                 global_default_model=global_default_model or "",
                 minimum_tier=minimum_tier,
             )
-            resolved_model = model_resolution.get("model")
-            if resolved_model:
-                merged["selected_model"] = resolved_model
-                merged["cycle_selected_model"] = resolved_model
-                merged["model"] = resolved_model
-            resolved_source = model_resolution.get("source")
-            if resolved_source:
-                merged["selected_model_source"] = resolved_source
-            if model_resolution.get("fallback_used") is not None:
-                merged["fallback_used"] = model_resolution["fallback_used"]
-            if model_resolution.get("fallback_reason"):
-                merged["fallback_reason"] = model_resolution["fallback_reason"]
+            model_resolution = _apply_model_resolution(merged, model_resolution)
 
     if global_default_model and not merged.get("selected_model"):
         merged.setdefault("selected_model", global_default_model)
