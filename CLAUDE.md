@@ -1,5 +1,5 @@
-<!-- AGENTS.md: Workspace instructions for AI coding agents -->
-# AGENTS.md
+<!-- CLAUDE.md: Workspace instructions for AI coding agents -->
+# CLAUDE.md
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
@@ -80,9 +80,9 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Appendix: Agent template (quick) and Karpathy guidance
 
-This repository follows the AGENTS.md template recommendations and Karpathy behavioral guidelines. Use this quick appendix when authoring or updating agent instructions.
+This repository follows the CLAUDE.md template recommendations and Karpathy behavioral guidelines. Use this quick appendix when authoring or updating agent instructions.
 
-- **AGENTS.md quick template:**
+- **CLAUDE.md quick template:**
   - **Project overview:** short purpose and key tech.
   - **Setup commands:** exact install/build/test commands agents can run.
   - **Dev workflow:** how to run, watch, and build.
@@ -116,4 +116,4 @@ Local Copilot skills discovery: Agents can reference locally installed Copilot s
 > - [Comment](.github/agents/Orchestrator/skills/comment-policy/SKILL.md)
 > - [Model](.github/agents/Orchestrator/skills/model-policy/SKILL.md)
 
-<!-- End AGENTS.md -->
+<!-- End CLAUDE.md -->

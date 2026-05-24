@@ -151,7 +151,10 @@ def find_repo_root(start: Optional[Path] = None) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run orchestrator log hook runner.")
+    parser = argparse.ArgumentParser(
+        description="Run orchestrator log hook runner.",
+        fromfile_prefix_chars="@",
+    )
     parser.add_argument("--phase", choices=["pre", "mid", "post"], default="pre", help="Hook phase")
     parser.add_argument("--dispatch-path", default="direct", help="Dispatch path (direct/single-agent/multi-agent)")
     parser.add_argument("--summary", default="", help="Short summary message")
@@ -179,7 +182,7 @@ def main() -> int:
     sys.path.insert(0, str(orchestrator_root))
 
     try:
-        from hooks.log_hooks import log_cycle
+        from hooks.log_hooks import log_cycle, normalize_checkpoint_metadata
     except Exception as e:  # pragma: no cover - import/runtime guard
         print("Failed to import hooks.log_hooks:", e, file=sys.stderr)
         return 2
@@ -236,6 +239,13 @@ def main() -> int:
 
     if model_resolution:
         metadata["model_resolution"] = model_resolution
+
+    metadata = normalize_checkpoint_metadata(
+        summary=args.summary,
+        metadata=metadata,
+        event_flags=event_flags,
+        prompt_command=args.prompt_command,
+    )
 
     try:
         res = log_cycle(

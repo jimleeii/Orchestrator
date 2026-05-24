@@ -131,7 +131,8 @@ def _select_model_by_tier(
 
 def resolve_model_for_subagent(spawn_payload: Dict[str, Any], parent_context: Dict[str, Any],
                                model_catalog: Dict[str, Dict[str, Any]], global_default_model: str,
-                               minimum_tier: Optional[str] = None) -> Dict[str, Any]:
+                               minimum_tier: Optional[str] = None,
+                               contract_score: Optional[int] = None) -> Dict[str, Any]:
     """Resolve model for a subagent using precedence and policy checks.
 
     spawn_payload: may contain `model` (string) as explicit override.
@@ -139,6 +140,8 @@ def resolve_model_for_subagent(spawn_payload: Dict[str, Any], parent_context: Di
     model_catalog: mapping model_id -> properties (must include `tier`).
     global_default_model: fallback model id.
     minimum_tier: optional enforced minimum tier string.
+    contract_score: optional 0-100 score from score.py; if below 70 the minimum
+        tier is escalated to 'frontier' to improve response quality on retry.
     """
 
     result = {
@@ -146,7 +149,21 @@ def resolve_model_for_subagent(spawn_payload: Dict[str, Any], parent_context: Di
         "source": None,
         "fallback_used": False,
         "fallback_reason": None,
+        "contract_score": contract_score,
     }
+
+    # Escalate minimum tier when the previous response scored below threshold
+    _SCORE_THRESHOLD = 70
+    if contract_score is not None and contract_score < _SCORE_THRESHOLD:
+        frontier_rank = TIERS_ORDER["frontier"]
+        current_rank = TIERS_ORDER.get(minimum_tier, -1)
+        if current_rank < frontier_rank:
+            minimum_tier = "frontier"
+        result["fallback_used"] = True
+        result["fallback_reason"] = (
+            f"contract_score={contract_score} below threshold {_SCORE_THRESHOLD}; "
+            "minimum_tier escalated to frontier"
+        )
 
     requested = spawn_payload.get("model")
 

@@ -1,10 +1,6 @@
 # RTK — Token-Optimized CLI
 
-**rtk** is a CLI proxy that filters and compresses command outputs, saving 60-90% tokens.
-
-## Rule
-
-Always prefix shell commands with `rtk`:
+Use `rtk` before shell commands so output stays compact and token-efficient.
 
 ```bash
 # Instead of:              Use:
@@ -16,7 +12,12 @@ kubectl get pods           rtk kubectl pods
 pwsh                       rtk pwsh
 ```
 
-## Meta commands (use directly)
+## Workspace guidance
+
+- `AGENTS.md` and `CLAUDE.md` are the full, authoritative workspace guide for this Orchestrator repo.
+- Keep edits surgical and consistent with the existing `rules/`, `prompts/`, `scripts/`, and `skills/` layout.
+
+## Meta commands
 
 ```bash
 rtk gain              # Token savings dashboard
