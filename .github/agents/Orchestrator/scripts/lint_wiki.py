@@ -103,6 +103,10 @@ def _read(path: Path) -> str:
         return ""
 
 
+def _utf8_backslashreplace_text(text: str) -> str:
+    return text.encode("utf-8", errors="backslashreplace").decode("utf-8")
+
+
 def _find_default_wiki(start: Path | None = None) -> Path:
     """Locate repo-root .wiki/orchestrator by walking upward to .git."""
     cur = (start or Path(__file__)).resolve()
@@ -293,10 +297,10 @@ def main(argv: list[str] | None = None) -> int:
     output = render_markdown(report, str(wiki), args.stale_days)
 
     if args.output:
-        Path(args.output).write_text(output, encoding="utf-8")
+        Path(args.output).write_text(_utf8_backslashreplace_text(output), encoding="utf-8")
         print(f"Lint report written to {args.output}", file=sys.stderr)
     else:
-        sys.stdout.buffer.write(output.encode("utf-8"))
+        sys.stdout.buffer.write(_utf8_backslashreplace_text(output).encode("utf-8"))
         sys.stdout.buffer.write(b"\n")
 
     # Print summary counts to stderr for CI integration

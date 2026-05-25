@@ -15,6 +15,7 @@ ORCHESTRATOR_ROOT = Path(__file__).resolve().parents[1]
 if str(ORCHESTRATOR_ROOT) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_ROOT))
 
+from hooks import log_hooks
 from hooks.log_hooks import _build_log_context, log_cycle
 
 
@@ -437,6 +438,15 @@ Assistant: I’ve got the inventory direction. I’m now collecting the active F
             transcript_text = transcript_files[0].read_text(encoding="utf-8")
             self.assertIn(r"\udc9d", transcript_text)
             self.assertNotIn("\udc9d", transcript_text)
+
+    def test_write_transcript_escapes_surrogates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_root:
+            transcript_path = log_hooks.write_transcript(Path(temp_root), "User: Lone surrogate in transcript \udc9d")
+
+            transcript_text = transcript_path.read_text(encoding="utf-8")
+
+        self.assertIn(r"\udc9d", transcript_text)
+        self.assertNotIn("\udc9d", transcript_text)
 
 
 if __name__ == "__main__":

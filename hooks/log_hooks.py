@@ -474,6 +474,10 @@ def _resolve_wiki_root(base_root: Path) -> Path:
     return base_root / TEMPLATES_DIR_NAME
 
 
+def _utf8_backslashreplace_text(text: str) -> str:
+    return text.encode('utf-8', errors='backslashreplace').decode('utf-8')
+
+
 def _dedupe_store_path(base_root: Path) -> Path:
     return _resolve_wiki_root(base_root) / '.curated-checkpoint-dedupe.json'
 
@@ -972,7 +976,7 @@ def write_transcript(repo_root: Path, transcript: str, prefix: str = 'transcript
     filename = f"{prefix}-{ts}.md"
     path = transcripts_dir / filename
     header = f"# Transcript {now.isoformat(timespec='seconds')}\n\n"
-    path.write_text(header + transcript + "\n", encoding='utf-8')
+    path.write_text(_utf8_backslashreplace_text(header + transcript + "\n"), encoding='utf-8')
     return path
 
 
@@ -1015,7 +1019,7 @@ def log_cycle(
     full_log_allowed, full_log_reason = _has_full_log_evidence(metadata, summary)
     curated_full_log = bool(metadata.get('curated_checkpoint') and (metadata.get('curated_log') or metadata.get('persist_full_log') or requested_full_log))
 
-    if level == 'full' and not curated_full_log:
+    if level == 'full' and not (curated_full_log or force_persist_all):
         level = 'compact'
 
     if level == 'minimal':
@@ -1027,7 +1031,7 @@ def log_cycle(
     if not _should_persist_entry(level, summary, metadata, effective_skills, prompt_command=prompt_command):
         return {"level": level, "action": "skipped-noise"}
 
-    if (requested_full_log or initial_full_level) and not full_log_allowed:
+    if (requested_full_log or initial_full_level) and not (full_log_allowed or force_persist_all):
         return {
             "level": 'compact',
             "command": '/info',

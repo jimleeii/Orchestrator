@@ -23,6 +23,12 @@ from typing import Any, Dict, List
 import textwrap
 import re
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from prompt_registry import build_manifest, get_append_command_targets, get_command_spec
+
 TEMPLATES_DIR_NAME = ".wiki/orchestrator"
 NOISE_TEXT_VALUES = {
     "",
@@ -46,39 +52,7 @@ UNRESOLVED_ENTRY_PATTERNS = (
     re.compile(r"^- Decision: keep \| revise \| rollback$", re.MULTILINE),
 )
 
-LOG_COMMANDS: Dict[str, List[str]] = {
-    "/full-log": [
-        "Behavior-Log.md",
-        "Behavior-Patterns.md",
-        "Learning-Backlog.md",
-        "Project-Context-Log.md",
-        "Runbook.md",
-        "Skill-Usage-Log.md",
-    ],
-    "/all-log": [
-        "Behavior-Log.md",
-        "Behavior-Patterns.md",
-        "Learning-Backlog.md",
-        "Project-Context-Log.md",
-        "Runbook.md",
-        "Skill-Usage-Log.md",
-    ],
-    "/critical": ["Behavior-Log.md", "Project-Context-Log.md", "Runbook.md"],
-    "/error": ["Behavior-Log.md", "Project-Context-Log.md"],
-    "/warning": ["Behavior-Log.md", "Behavior-Patterns.md"],
-    "/warn": ["Behavior-Log.md", "Behavior-Patterns.md"],
-    "/info": ["Skill-Usage-Log.md", "Behavior-Log.md"],
-    "/debug": ["Runbook.md", "Learning-Backlog.md"],
-    "/trace": ["Learning-Backlog.md"],
-    "/behavior-log": ["Behavior-Log.md"],
-    "/behavior": ["Behavior-Log.md"],
-    "/patterns-log": ["Behavior-Patterns.md"],
-    "/pattern": ["Behavior-Patterns.md"],
-    "/learning-backlog": ["Learning-Backlog.md"],
-    "/project-context": ["Project-Context-Log.md"],
-    "/runbook": ["Runbook.md"],
-    "/skill-usage": ["Skill-Usage-Log.md"],
-}
+LOG_COMMANDS: Dict[str, List[str]] = get_append_command_targets()
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -449,16 +423,25 @@ def _render_template(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Append a prompt-style log entry to repository template log files.")
-    parser.add_argument("command", help="Prompt command name (e.g. /full-log, /info)")
+    parser.add_argument("command", nargs="?", help="Prompt command name (e.g. /full-log, /info)")
     parser.add_argument("message", nargs="?", help="Message text to log. If omitted, read from stdin.")
     parser.add_argument("-a", "--author", help="Author name to include in the entry.")
     parser.add_argument("-t", "--tags", help="Comma-separated tags to add to the entry.")
     parser.add_argument("--preview", action="store_true", help="Print the generated entries but do not write files.")
+    parser.add_argument("--manifest", action="store_true", help="Print the explicit prompt-command manifest and exit.")
     parser.add_argument("--cycle-id", help="Optional orchestration cycle ID to include in each entry.")
     parser.add_argument("--root", help="Repository root (for testing). If omitted, discovered automatically.")
     args = parser.parse_args()
 
     repo_root = Path(args.root) if args.root else find_repo_root(Path(__file__))
+
+    if args.manifest:
+        print(json.dumps(build_manifest(repo_root), indent=2, ensure_ascii=False))
+        return 0
+
+    if not args.command:
+        parser.error("the following arguments are required: command")
+
     templates_dir = repo_root / TEMPLATES_DIR_NAME
 
     if not templates_dir.exists():
@@ -469,6 +452,13 @@ def main() -> int:
     if not cmd.startswith("/"):
         cmd = "/" + cmd
     cmd_low = cmd.lower()
+
+    spec = get_command_spec(cmd_low)
+    if spec and not spec.supports_log_append:
+        print(f"Command {cmd} is registered as a {spec.category} workflow and is not supported by the append-only log writer.")
+        if spec.prompt_file:
+            print(f"Prompt source: .github/prompts/{spec.prompt_file}")
+        return 2
 
     targets = LOG_COMMANDS.get(cmd_low)
     if targets is None:

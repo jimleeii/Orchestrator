@@ -56,9 +56,10 @@ class TestLogPromptTemplates(unittest.TestCase):
             output = self._run_preview(repo_root, '/full-log', 'multi-template smoke test')
 
             self.assertIn('Behavior-Log.md', output)
-            self.assertIn('Marker: behavior', output)
+            self.assertIn('### OBS-', output)
+            self.assertIn('multi-template smoke test', output)
             self.assertIn('Runbook.md', output)
-            self.assertIn('Marker: runbook', output)
+            self.assertIn('### CHG-', output)
 
     def test_single_template_fallback_still_works(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -87,7 +88,7 @@ class TestLogPromptTemplates(unittest.TestCase):
 
             output = self._run_preview(repo_root, '/runbook', 'fallback smoke test')
 
-            self.assertIn('Marker: default-runbook', output)
+            self.assertIn('### CHG-', output)
             self.assertIn('Change Applied: fallback smoke test', output)
 
     def test_hook_runner_populates_context_fields(self):
@@ -103,6 +104,7 @@ class TestLogPromptTemplates(unittest.TestCase):
                 '--author', 'tester',
                 '--force-persist',
                 '--preview',
+                    '--metadata', '{"cycle_id":"CYC-20260525-132703-ABCD","request_type":"chat-conversion","subagent":"Orchestrator","outcome_impact":"positive","invocation_reason":"Hook field fill test","change_applied":"Updated orchestrator hook metadata flow"}',
                 '--root', str(repo_root),
             ],
             check=True,
@@ -112,8 +114,9 @@ class TestLogPromptTemplates(unittest.TestCase):
 
         output = completed.stdout
         self.assertIn('Request Type: chat-conversion', output)
-        self.assertIn('Subagent(s): Orchestrator', output)
-        self.assertIn('Skills Used (ordered): prompt-optimizer, contract-validator', output)
+        self.assertIn('Subagent: Orchestrator', output)
+        self.assertIn('Subagents: Orchestrator', output)
+        self.assertIn('Skills Used: prompt-optimizer, contract-validator', output)
         self.assertIn('Invocation Reason: Hook field fill test', output)
         self.assertIn('Outcome Impact: positive', output)
 
