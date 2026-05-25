@@ -71,9 +71,10 @@ def _score_transcript(text: str, subagent: str | None) -> str | None:
     if role:
         cmd += ["--role", role]
     try:
+        safe_text = _utf8_backslashreplace_text(text)
         result = subprocess.run(
             cmd,
-            input=text,
+            input=safe_text,
             capture_output=True,
             text=True,
             timeout=15,
@@ -158,6 +159,10 @@ def _merge_unique_text_lists(*sources: Any) -> list[str]:
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _utf8_backslashreplace_text(text: str) -> str:
+    return text.encode("utf-8", errors="backslashreplace").decode("utf-8")
 
 
 def _strip_role_prefix(line: str) -> str:
@@ -761,7 +766,7 @@ def main() -> int:
         if not t.exists():
             print(f"Transcript file not found: {t}", file=sys.stderr)
             return 2
-        raw_transcript = t.read_text(encoding="utf-8")
+        raw_transcript = t.read_text(encoding="utf-8", errors="surrogateescape")
     else:
         if sys.stdin.isatty():
             print("No transcript provided via stdin or --transcript-file", file=sys.stderr)
@@ -874,7 +879,7 @@ def main() -> int:
     transcript_path = None
     if transcript_payload:
         tf = tempfile.NamedTemporaryFile(prefix="copilot_transcript_", suffix=".md", delete=False)
-        tf.write(transcript_text.encode("utf-8"))
+        tf.write(_utf8_backslashreplace_text(transcript_text).encode("utf-8"))
         tf.flush()
         tf.close()
         transcript_path = Path(tf.name)
@@ -882,7 +887,7 @@ def main() -> int:
         transcript_path = t
     else:
         tf = tempfile.NamedTemporaryFile(prefix="copilot_transcript_", suffix=".md", delete=False)
-        tf.write(raw_transcript.encode("utf-8"))
+        tf.write(_utf8_backslashreplace_text(raw_transcript).encode("utf-8"))
         tf.flush()
         tf.close()
         transcript_path = Path(tf.name)
@@ -929,7 +934,7 @@ def main() -> int:
             mode="w", prefix="copilot_runner_args_", suffix=".txt",
             delete=False, encoding="utf-8",
         ) as af:
-            af.write("\n".join(arg_lines))
+            af.write(_utf8_backslashreplace_text("\n".join(arg_lines)))
             args_file = af.name
 
         cmd = [sys.executable, str(runner), f"@{args_file}"]

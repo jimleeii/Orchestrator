@@ -1,4 +1,3 @@
-<!-- AGENTS.md: Workspace instructions for AI coding agents -->
 # AGENTS.md
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
@@ -98,22 +97,9 @@ This repository follows the AGENTS.md template recommendations and Karpathy beha
 
 Use this appendix as a quick reminder; keep the main sections above specific and actionable for agents. When in doubt, prefer short, tested commands and explicit verification steps.
 
-Local Copilot skills discovery: Agents can reference locally installed Copilot skills and load the live content of these files via `read_file`. These files are found at `%USERPROFILE%/.copilot/skills`. Consider these skill names when writing routing rules or workspace initialization logic.
+Local Copilot skills discovery: Agents can reference locally installed Copilot skills found in the external system folder `%USERPROFILE%\\.copilot\\skills`. Treat it as read-only metadata for skill usage logging and routing rules; do not treat it as a workspace path.
 
-## Agent Uage (When Orchestrator is active)
+## Orchestrator Agent (When using)
 
-> [!NOTE]
-> This section is only relevant when the Orchestrator is active. The Orchestrator should ALWAYS dispatch to subagents for task execution. It provides the following additional features:
->
-> - [Call helper scripts for persistence](.github/agents/Orchestrator/skills/workflow-policy/SKILL.md)
-> - [Logging](.github/agents/Orchestrator/skills/logging-policy/SKILL.md)
-> - [Lightweight validation](.github/agents/Orchestrator/skills/quality-policy/SKILL.md)
->
-> When an agent is run, the Orchestrator will:
->
-> - [Logging](.github/agents/Orchestrator/skills/logging-policy/SKILL.md)
-> - [Contract](.github/agents/Orchestrator/skills/contract-validator/SKILL.md)
-> - [Comment](.github/agents/Orchestrator/skills/comment-policy/SKILL.md)
-> - [Model](.github/agents/Orchestrator/skills/model-policy/SKILL.md)
-
-<!-- End AGENTS.md -->
+> - Use all policy skills from `skills/*/SKILL.md`
+> - Use all templates from `.github/agents/templates/` folder
