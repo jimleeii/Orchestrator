@@ -18,7 +18,6 @@ except Exception:
     from trigger_test_prompt import append_behavior_log, append_skill_usage_log, write_transcript, extract_skill_usage
 try:
     from src.health_monitor import (
-        build_health_metadata,
         build_health_policy,
         build_health_scope,
         classify_execution_failure_kind,
@@ -27,7 +26,6 @@ try:
     )
 except Exception:
     from health_monitor import (  # type: ignore
-        build_health_metadata,
         build_health_policy,
         build_health_scope,
         classify_execution_failure_kind,

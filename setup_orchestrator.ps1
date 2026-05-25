@@ -133,21 +133,40 @@ try {
             $RemovePromptSource = $true
         }
     } else {
-        Write-Warn "ZIP not found at $ZipCandidate. Falling back to copying files from repository root."
+        Write-Warn "ZIP not found at $ZipCandidate. Falling back to copying files from repository or agent folder."
         New-Item -ItemType Directory -Force -Path $FinalDest | Out-Null
 
+        # Prefer the packaged agent under .github\agents\Orchestrator when available
+        $agentSrc = Join-Path $RepoRoot '.github\agents\Orchestrator'
+        if (Test-Path $agentSrc) {
+            Write-Info "Found agent folder at $agentSrc; copying from there."
+            $srcRoot = $agentSrc
+        } else {
+            Write-Info "Agent folder not found; copying from repository root."
+            $srcRoot = $RepoRoot
+        }
+
         $itemsToCopy = @(
-            'orchestrator.agent.md', 'AGENTS.md', 'orchestrator-tools.md', 'requirements.txt', 'Orchestrator.md'
+            'orchestrator.agent.md', 'AGENTS.md', 'orchestrator-tools.md', 'requirements.txt',
+            'DISPATCH_AND_LOGGING_API.md', 'HEALTH_METADATA.md', 'OPERATIONAL_TRUTH.md',
+            'log_cycle.json', 'rtk-rewrite.json'
         )
         foreach ($it in $itemsToCopy) {
-            $src = Join-Path $RepoRoot $it
+            $src = Join-Path $srcRoot $it
+            # fallback to repo root for files not present inside the agent folder
+            if (-not (Test-Path $src) -and $srcRoot -ne $RepoRoot) { $src = Join-Path $RepoRoot $it }
             if (Test-Path $src) { Copy-Item -Path $src -Destination $FinalDest -Force }
         }
 
-        foreach ($d in @('templates','skills','src','scripts')) {
-            $srcd = Join-Path $RepoRoot $d
+        foreach ($d in @('templates','skills','src','scripts','hooks')) {
+            $srcd = Join-Path $srcRoot $d
+            if (-not (Test-Path $srcd) -and $srcRoot -ne $RepoRoot) { $srcd = Join-Path $RepoRoot $d }
             if (Test-Path $srcd) { Copy-Item -Path $srcd -Destination $FinalDest -Recurse -Force }
         }
+
+        # Use the agent folder (when present) or repo root as the prompt source for installing prompts
+        $PromptSourceRoot = $srcRoot
+        $RemovePromptSource = $false
     }
 
     Install-PromptFolder -SourceRoot $PromptSourceRoot -RepoRoot $RepoRoot -RemoveSource:$RemovePromptSource -Force:$Force

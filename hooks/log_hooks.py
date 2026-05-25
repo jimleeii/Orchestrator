@@ -1019,7 +1019,7 @@ def log_cycle(
     full_log_allowed, full_log_reason = _has_full_log_evidence(metadata, summary)
     curated_full_log = bool(metadata.get('curated_checkpoint') and (metadata.get('curated_log') or metadata.get('persist_full_log') or requested_full_log))
 
-    if level == 'full' and not (curated_full_log or force_persist_all):
+    if level == 'full' and not curated_full_log:
         level = 'compact'
 
     if level == 'minimal':
@@ -1031,7 +1031,7 @@ def log_cycle(
     if not _should_persist_entry(level, summary, metadata, effective_skills, prompt_command=prompt_command):
         return {"level": level, "action": "skipped-noise"}
 
-    if (requested_full_log or initial_full_level) and not (full_log_allowed or force_persist_all):
+    if (requested_full_log or initial_full_level) and not full_log_allowed:
         return {
             "level": 'compact',
             "command": '/info',

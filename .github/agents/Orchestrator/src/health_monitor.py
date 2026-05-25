@@ -4,7 +4,7 @@ import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from threading import RLock
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Sequence
 
 from src.health_types import (
     HEALTH_FAILURE_KINDS,
@@ -16,7 +16,6 @@ from src.health_types import (
     HealthSnapshot,
     HealthState,
 )
-from src.workflow_types import freeze_json_value
 
 
 def _text(value: Any, default: str = "") -> str:

@@ -22,7 +22,6 @@ from prompt_registry import (  # noqa: E402
     PROMPT_COMMANDS,
     build_manifest,
     discover_prompt_files,
-    get_prompt_backed_commands,
 )
 
 

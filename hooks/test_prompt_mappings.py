@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ORCHESTRATOR_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ORCHESTRATOR_ROOT
+REPO_ROOT = ORCHESTRATOR_ROOT.parents[2]
 if str(ORCHESTRATOR_ROOT) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_ROOT))
 

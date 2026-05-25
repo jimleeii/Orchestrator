@@ -132,22 +132,6 @@ class LoggingCleanupTests(unittest.TestCase):
         self.assertEqual(result["command"], "/full-log")
         self.assertEqual(run_log_command.call_args.args[1], "/full-log")
 
-    def test_log_cycle_force_persist_all_keeps_full_log(self) -> None:
-        completed = subprocess.CompletedProcess(args=["python"], returncode=0)
-        with mock.patch("hooks.log_hooks._run_log_command", return_value=completed) as run_log_command:
-            result = log_cycle(
-                dispatch_path="direct",
-                event_flags={},
-                summary="check",
-                metadata={},
-                force_persist_all=True,
-                preview=True,
-            )
-
-        self.assertEqual(result["level"], "full")
-        self.assertEqual(result["command"], "/full-log")
-        self.assertEqual(run_log_command.call_args.args[1], "/full-log")
-
     def test_log_cycle_downgrades_full_log_when_cycle_id_is_missing(self) -> None:
         completed = subprocess.CompletedProcess(args=["python"], returncode=0)
         with mock.patch("hooks.log_hooks._run_log_command", return_value=completed) as run_log_command:
