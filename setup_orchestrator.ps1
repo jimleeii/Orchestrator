@@ -222,6 +222,54 @@ try {
         Write-Warn "Failed to install hook files: $_"
     }
 
+    # Ensure templates/Home.md (if present) is moved into the repo wiki at .wiki/orchestrator/Home.md
+    try {
+        $wikiDir = Join-Path $RepoRoot '.wiki\orchestrator'
+        New-Item -ItemType Directory -Force -Path $wikiDir | Out-Null
+
+        # Normalize candidate roots to simple strings if any are arrays (defensive)
+        if ($PromptSourceRoot -is [System.Array]) { $PromptSourceRoot = $PromptSourceRoot[0] }
+        if ($FinalDest -is [System.Array]) { $FinalDest = $FinalDest[0] }
+        if ($RepoRoot -is [System.Array]) { $RepoRoot = $RepoRoot[0] }
+
+        $homeCandidates = @()
+        $homeCandidates += Join-Path $PromptSourceRoot 'templates\Home.md'
+        $homeCandidates += Join-Path $FinalDest 'templates\Home.md'
+        $homeCandidates += Join-Path $PromptSourceRoot 'Home.md'
+        $homeCandidates += Join-Path $FinalDest 'Home.md'
+        $homeCandidates += Join-Path $RepoRoot 'templates\Home.md'
+
+        $foundHome = $null
+        foreach ($hc in $homeCandidates) {
+            if ([string]::IsNullOrEmpty($hc)) { continue }
+            if (Test-Path $hc) { $foundHome = $hc; break }
+        }
+
+        if ($foundHome) {
+            $destHome = Join-Path $wikiDir 'Home.md'
+            Copy-Item -Path $foundHome -Destination $destHome -Force
+            Write-Info "Installed wiki Home.md to ${destHome} (from ${foundHome})"
+
+            # Remove the source Home.md when it was part of the installed agent/package
+            $shouldRemoveSource = $false
+            if ($foundHome -like "${FinalDest}*") { $shouldRemoveSource = $true }
+            if ($RemovePromptSource) { $shouldRemoveSource = $true }
+
+            if ($shouldRemoveSource) {
+                try {
+                    Remove-Item -Force -LiteralPath $foundHome
+                    Write-Info "Removed source Home.md at ${foundHome} after moving to wiki"
+                } catch {
+                    Write-Warn "Failed to remove source Home.md at ${foundHome}: $_"
+                }
+            }
+        } else {
+            Write-Info "No templates/Home.md found in expected locations; skipping Home.md wiki install."
+        }
+    } catch {
+        Write-Warn "Failed while installing Home.md to wiki: $_"
+    }
+
     if ($RemoveDocs) {
         $docPath = Join-Path $FinalDest 'Orchestrator.md'
         if (Test-Path $docPath) {
@@ -250,16 +298,18 @@ try {
         Write-Warn "Failed to set execution policy: $_"
     }
 
-    # Install Python dependencies into a venv under the agent folder by default.
+    # Install Python dependencies into a venv. Default venv location is at the workspace root (.venv)
     $ShouldInstallDeps = $InstallDeps -or -not $PSBoundParameters.ContainsKey('InstallDeps')
+    # Default venv path set to workspace root per user preference
+    $venvPath = Join-Path $RepoRoot '.venv'
     if ($ShouldInstallDeps) {
         # Locate a Python executable
         $python = (Get-Command python -ErrorAction SilentlyContinue).Path
         if (-not $python) { $python = (Get-Command py -ErrorAction SilentlyContinue).Path }
         if (-not $python) { Write-Warn "No Python executable found on PATH. Skipping dependency installation." }
         else {
-            $venvPath = Join-Path $FinalDest '.venv'
-            $venvPython = Join-Path $venvPath 'Scripts\python.exe'
+                # Use workspace-root venv by default (previously under the installed agent folder)
+                $venvPython = Join-Path $venvPath 'Scripts\python.exe'
             if (-not (Test-Path $venvPython)) {
                 Write-Info "Creating venv at $venvPath"
                 & $python -m venv $venvPath
@@ -290,10 +340,10 @@ try {
         else {
             # Use venv python if available
             $runner = $null
-            $venvPython = Join-Path $FinalDest '.venv\Scripts\python.exe'
-            if (Test-Path $venvPython) {
-                $runner = $venvPython
-            } else {
+            # prefer workspace-root venv if present
+            $venvPython = Join-Path $venvPath 'Scripts\python.exe'
+            if (Test-Path $venvPython) { $runner = $venvPython }
+            else {
                 $runner = (Get-Command python -ErrorAction SilentlyContinue).Path
                 if (-not $runner) { $runner = (Get-Command py -ErrorAction SilentlyContinue).Path }
             }
@@ -314,7 +364,7 @@ try {
     Write-Info "Agent installed at: $FinalDest"
     Write-Host ""
     Write-Info "If you installed dependencies, activate the venv with:" 
-    Write-Host "  . $FinalDest\.venv\Scripts\Activate.ps1" -ForegroundColor Green
+    Write-Host "  . $venvPath\Scripts\Activate.ps1" -ForegroundColor Green
     Write-Info "Then run smoke test manually if you skipped -SmokeTest." 
     exit 0
 } catch {
