@@ -188,30 +188,30 @@ def resolve_model_for_subagent(spawn_payload: Dict[str, Any], parent_context: Di
         result.update({"model": preferred_model, "source": "preferred_model"})
         return result
 
-    # 3. Subagent/task-aware best fit
+    # 3. Parent selected model (inherits from parent context)
+    parent_selected = parent_context.get("selected_model")
+    if parent_selected and is_allowed_model(parent_selected, model_catalog, minimum_tier):
+        result.update({"model": parent_selected, "source": "parent_selected_model"})
+        return result
+
+    # 4. Cycle selected model (per-cycle override)
+    cycle_model = parent_context.get("cycle_selected_model")
+    if cycle_model and is_allowed_model(cycle_model, model_catalog, minimum_tier):
+        result.update({"model": cycle_model, "source": "cycle_selected_model"})
+        return result
+
+    # 5. Global default
+    if global_default_model and is_allowed_model(global_default_model, model_catalog, minimum_tier):
+        result.update({"model": global_default_model, "source": "global_default_model"})
+        return result
+
+    # 6. Subagent/task-aware best fit (fallback when no higher-priority model exists)
     preferred_tier = _preferred_tier_from_context(spawn_payload, parent_context)
     best_fit_model = _select_model_by_tier(model_catalog, preferred_tier, minimum_tier)
     if best_fit_model:
         result.update({"model": best_fit_model, "source": "context_best_fit_model"})
         if preferred_tier:
             result["preferred_tier"] = preferred_tier
-        return result
-
-    # 4. Parent selected model
-    parent_selected = parent_context.get("selected_model")
-    if parent_selected and is_allowed_model(parent_selected, model_catalog, minimum_tier):
-        result.update({"model": parent_selected, "source": "parent_selected_model"})
-        return result
-
-    # 5. Cycle selected model
-    cycle_model = parent_context.get("cycle_selected_model")
-    if cycle_model and is_allowed_model(cycle_model, model_catalog, minimum_tier):
-        result.update({"model": cycle_model, "source": "cycle_selected_model"})
-        return result
-
-    # 6. Global default
-    if global_default_model and is_allowed_model(global_default_model, model_catalog, minimum_tier):
-        result.update({"model": global_default_model, "source": "global_default_model"})
         return result
 
     # If we reach here, nothing was allowed — return blocked-style response

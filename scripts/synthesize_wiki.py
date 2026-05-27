@@ -55,6 +55,32 @@ def _format_top_skills(skill_counts: dict[str, int]) -> list[str]:
     return [f'- `{name}` — {count} cycle(s)' for name, count in list(skill_counts.items())[:10]]
 
 
+def _format_count_rows(counts: dict[str, int], key_name: str) -> list[dict[str, Any]]:
+    return [{key_name: name, 'count': count} for name, count in counts.items()]
+
+
+def _format_anomaly_samples(samples: list[dict[str, Any]]) -> list[str]:
+    if not samples:
+        return ['- No telemetry anomalies detected yet.']
+    lines: list[str] = []
+    for sample in samples:
+        sample_type = sample.get('type', 'anomaly')
+        if sample_type == 'duplicate_fingerprint':
+            record_indices = sample.get('record_indices', [])
+            provenance = f" at record indices {record_indices}" if record_indices else ''
+            lines.append(
+                f"- `duplicate_fingerprint` — `{sample.get('fingerprint', '')}` appeared {sample.get('occurrences', 0)} time(s){provenance}."
+            )
+        elif sample_type == 'incomplete_record':
+            missing_fields = ', '.join(sample.get('missing_fields', []))
+            cycle_id = sample.get('cycle_id')
+            subject = f"cycle `{cycle_id}`" if cycle_id else f"record {sample.get('record_index', '?')}"
+            lines.append(f"- `incomplete_record` — {subject} missing {missing_fields}.")
+        else:
+            lines.append(f"- `{sample_type}` — record {sample.get('record_index', '?')}")
+    return lines
+
+
 def _format_glossary() -> list[str]:
     return [f'- **{term}** — {definition}' for term, definition in sorted(GLOSSARY.items())]
 
@@ -67,6 +93,7 @@ def _knowledge_paths(wiki_root: Path) -> dict[str, Path]:
         'skills': knowledge_root / 'Learned-Skills.md',
         'routing': knowledge_root / 'Learned-Routing.md',
         'models': knowledge_root / 'Learned-Model-Selection.md',
+        'telemetry': knowledge_root / 'Learned-Telemetry.md',
     }
 
 
@@ -79,6 +106,11 @@ def generate_knowledge_pages(wiki_root: Path, cycles: int = 30, stale_days: int 
     routing_rows = metrics.get('routing_quality', [])
     model_rows = metrics.get('model_quality', [])
     feedback_rows = metrics.get('contract_feedback', {}).get('policy_candidates', [])
+    telemetry_summary = metrics.get('telemetry_summary', {})
+    dispatch_rows = _format_count_rows(telemetry_summary.get('dispatch_counts', {}), 'dispatch_path')
+    level_rows = _format_count_rows(telemetry_summary.get('level_counts', {}), 'level')
+    command_rows = _format_count_rows(telemetry_summary.get('command_counts', {}), 'command')
+    telemetry_source_state = telemetry_summary.get('source_state', 'missing')
 
     pages: dict[Path, str] = {}
     pages[knowledge_paths['index']] = '\n'.join([
@@ -100,6 +132,15 @@ def generate_knowledge_pages(wiki_root: Path, cycles: int = 30, stale_days: int 
         '- [Learned Skills](Learned-Skills.md)',
         '- [Learned Routing](Learned-Routing.md)',
         '- [Learned Model Selection](Learned-Model-Selection.md)',
+        '- [Learned Telemetry](Learned-Telemetry.md)',
+        '',
+        '## Telemetry Snapshot',
+        '',
+        f"- Records processed: {telemetry_summary.get('record_count', 0)}",
+        f"- Unique cycles: {telemetry_summary.get('unique_cycle_count', 0)}",
+        f"- Duplicate fingerprints: {telemetry_summary.get('duplicate_fingerprint_count', 0)}",
+        f"- Incomplete records: {telemetry_summary.get('incomplete_record_count', 0)}",
+        f"- Source state: {telemetry_source_state}",
         '',
         '## Top Pattern Signals',
         '',
@@ -116,6 +157,47 @@ def generate_knowledge_pages(wiki_root: Path, cycles: int = 30, stale_days: int 
         '## Retrieval',
         '',
         '- Use `scripts/search_wiki.py <query>` to search the generated knowledge pages and the wiki layer together.',
+        '',
+    ]) + '\n'
+
+    if telemetry_source_state == 'missing':
+        telemetry_intro = 'No telemetry JSONL stream was available when this page was generated, so this page acts as a stable placeholder until telemetry arrives.'
+    elif telemetry_source_state == 'present_no_valid_records':
+        telemetry_intro = 'Telemetry JSONL was present, but no valid telemetry records were parsed yet, so this page reflects the source-state gap instead of a missing file.'
+    else:
+        telemetry_intro = 'This telemetry summary distills the Phase 1 telemetry JSONL lane into markdown-native knowledge.'
+
+    pages[knowledge_paths['telemetry']] = '\n'.join([
+        '# What We Learned — Telemetry',
+        '',
+        telemetry_intro,
+        '',
+        '## Snapshot',
+        '',
+        f"- Schema version: {telemetry_summary.get('schema_version', 'orchestrator.telemetry.index.v1')}",
+        f"- Generated: {telemetry_summary.get('generated_utc')}",
+        f"- Source path: `{telemetry_summary.get('source_path', 'telemetry/cycles.jsonl')}`",
+        f"- Source state: {telemetry_summary.get('source_state', 'missing')}",
+        f"- Records: {telemetry_summary.get('record_count', 0)}",
+        f"- Unique cycles: {telemetry_summary.get('unique_cycle_count', 0)}",
+        f"- Duplicate fingerprints: {telemetry_summary.get('duplicate_fingerprint_count', 0)}",
+        f"- Incomplete records: {telemetry_summary.get('incomplete_record_count', 0)}",
+        '',
+        '## Dispatch Counts',
+        '',
+        *_format_metric_rows(dispatch_rows, [('dispatch_path', 'Dispatch Path'), ('count', 'Count')]),
+        '',
+        '## Level Counts',
+        '',
+        *_format_metric_rows(level_rows, [('level', 'Level'), ('count', 'Count')]),
+        '',
+        '## Command Counts',
+        '',
+        *_format_metric_rows(command_rows, [('command', 'Command'), ('count', 'Count')]),
+        '',
+        '## Anomaly Samples',
+        '',
+        *_format_anomaly_samples(telemetry_summary.get('anomaly_samples', [])),
         '',
     ]) + '\n'
 

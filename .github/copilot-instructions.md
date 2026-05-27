@@ -59,5 +59,9 @@ rtk proxy <cmd>       # Run raw (no filtering) but track usage
 - `AGENTS.md` and `CLAUDE.md` are the full, authoritative workspace guide for this Orchestrator repo.
 - Keep edits surgical and consistent with the existing `rules/`, `prompts/`, `scripts/`, and `skills/` layout.
 
+## Links
+- Workspace summary: [AGENTS.md](../AGENTS.md)
+- CLAUDE reference: [CLAUDE.md](../CLAUDE.md)
+
 ---
 <!-- End workspace instructions -->

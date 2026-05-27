@@ -42,7 +42,28 @@ def _target_token(target: str) -> str:
 
 
 def validate_manifest(repo_root: Path) -> list[str]:
-    prompts_dir = repo_root / '.github' / 'prompts'
+    # If the provided repo_root doesn't contain prompt templates, search up the
+    # ancestor chain for a directory that does. Tests running in different
+    # workspace layouts may pass an ancestor path; this makes validation robust.
+    for candidate_root in (repo_root, *repo_root.parents):
+        if (candidate_root / '.github' / 'prompts').exists() or (candidate_root / 'prompts').exists():
+            repo_root = candidate_root
+            break
+
+    # Support both `.github/prompts` (packaged layout) and top-level `prompts/` (repo-local)
+    prompt_dirs = [repo_root / '.github' / 'prompts', repo_root / 'prompts']
+
+    # If the repo_root still doesn't contain a prompts directory, look for an
+    # Orchestrator subfolder and prefer its prompts directory (handles the
+    # case where the caller passed an ancestor directory).
+    if not any(d.exists() for d in prompt_dirs):
+        for orch in repo_root.glob('**/Orchestrator'):
+            for candidate in (orch / '.github' / 'prompts', orch / 'prompts'):
+                if candidate.exists():
+                    prompt_dirs = [candidate]
+                    break
+            if any(d.exists() for d in prompt_dirs):
+                break
     discovered = set(discover_prompt_files(repo_root))
     referenced: dict[str, str] = {}
     errors: list[str] = []
@@ -54,8 +75,15 @@ def validate_manifest(repo_root: Path) -> list[str]:
         if spec.prompt_file is None:
             continue
 
-        prompt_path = prompts_dir / spec.prompt_file
-        if not prompt_path.exists():
+        # locate the prompt file in any known prompt directory
+        prompt_path = None
+        for pd in prompt_dirs:
+            candidate = pd / spec.prompt_file
+            if candidate.exists():
+                prompt_path = candidate
+                break
+
+        if prompt_path is None:
             errors.append(f'{command}: prompt file missing: .github/prompts/{spec.prompt_file}')
             continue
 

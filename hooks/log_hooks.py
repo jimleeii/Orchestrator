@@ -23,11 +23,13 @@ so the project keeps a single mapping of prompt-commands -> template files.
 from __future__ import annotations
 
 import json
+import os
 import hashlib
 import sys
 import subprocess
+import tempfile
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import re
 from typing import Optional, List, Dict, Any
 
@@ -126,6 +128,7 @@ REQUEST_TEXT_KEYS = (
     'summary',
 )
 FULL_LOG_COMMANDS = {'/full-log', '/all-log'}
+TELEMETRY_CYCLE_FILENAME = 'cycles.jsonl'
 CONTINUATION_REQUEST_RE = re.compile(
     r'^(?:please\s+)?(?:approve(?:d)?|perceed|proceed|go(?:\s+ahead)?|continue|carry\s+on|keep\s+going)(?:\s+please)?[.!?]*$',
     re.IGNORECASE,
@@ -474,12 +477,94 @@ def _resolve_wiki_root(base_root: Path) -> Path:
     return base_root / TEMPLATES_DIR_NAME
 
 
+def _prune_synthesis_logs(logs_dir: Path, retention_days: int) -> None:
+    """Delete synth log files older than retention_days from logs_dir.
+
+    Non-fatal: any exceptions are swallowed because pruning is best-effort.
+    """
+    try:
+        if retention_days is None:
+            return
+        if not logs_dir.exists() or not logs_dir.is_dir():
+            return
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(retention_days))
+        for path in logs_dir.glob('synth-*.log'):
+            try:
+                mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+            except Exception:
+                continue
+            if mtime < cutoff:
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        return
+
+
 def _utf8_backslashreplace_text(text: str) -> str:
     return text.encode('utf-8', errors='backslashreplace').decode('utf-8')
 
 
 def _dedupe_store_path(base_root: Path) -> Path:
     return _resolve_wiki_root(base_root) / '.curated-checkpoint-dedupe.json'
+
+
+def _telemetry_cycle_path(base_root: Path) -> Path:
+    return _resolve_wiki_root(base_root) / 'telemetry' / TELEMETRY_CYCLE_FILENAME
+
+
+def _build_cycle_telemetry_fingerprint(payload: Dict[str, Any]) -> str:
+    fingerprint_payload = {
+        'dispatch_path': _first_text(payload.get('dispatch_path')),
+        'level': _first_text(payload.get('level')),
+        'command': _first_text(payload.get('command')),
+        'cycle_id': _first_text(payload.get('cycle_id')),
+        'session_id': _first_text(payload.get('session_id')),
+        'request_group_id': _first_text(payload.get('request_group_id')),
+        'dedupe_key': _first_text(payload.get('dedupe_key')),
+    }
+    digest = hashlib.sha1(json.dumps(fingerprint_payload, sort_keys=True, ensure_ascii=True).encode('utf-8')).hexdigest()
+    return f"sha1:{digest}"
+
+
+def _append_cycle_telemetry_event(
+    base_root: Path,
+    dispatch_path: str,
+    level: str,
+    command: str,
+    summary: str,
+    skills: List[str],
+    metadata: Dict[str, Any],
+    preview: bool,
+) -> None:
+    if preview:
+        return
+
+    payload: Dict[str, Any] = {
+        'schema_version': 'orchestrator.telemetry.cycle.v1',
+        'event_type': 'cycle.persisted',
+        'recorded_at_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        'dispatch_path': dispatch_path,
+        'level': level,
+        'command': command,
+        'persisted': True,
+        'preview': bool(preview),
+        'cycle_id': _first_text(metadata.get('cycle_id')),
+        'session_id': _first_text(metadata.get('session_id')),
+        'request_group_id': _first_text(metadata.get('request_group_id')),
+        'dedupe_key': _first_text(metadata.get('dedupe_key')),
+        'curated_checkpoint': bool(metadata.get('curated_checkpoint')),
+        'summary': _normalize_inline_text(summary),
+        'skills_used': list(skills),
+    }
+    payload['fingerprint'] = _build_cycle_telemetry_fingerprint(payload)
+
+    path = _telemetry_cycle_path(base_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = _utf8_backslashreplace_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    with path.open('a', encoding='utf-8') as handle:
+        handle.write(line + '\n')
 
 
 def _load_dedupe_store(base_root: Path) -> Dict[str, str]:
@@ -708,6 +793,188 @@ def _run_log_command(
         cmd += ['--preview']
     # Use run so exceptions propagate to callers for the orchestrator to handle
     return subprocess.run(cmd, check=True)
+
+
+def _run_synthesize_wiki(repo_root: Path, target_root: Optional[Path] = None, preview: bool = False) -> None:
+    """Fire-and-forget run of scripts/synthesize_wiki.py to regenerate knowledge pages.
+    Behavior:
+      - No-op in preview mode.
+      - Respects `.wiki/orchestrator/config.json` keys:
+          - `auto_synthesize_on_persist` (bool, default True)
+          - `synthesis_logging` (bool, default True)
+      - When enabled, appends a short START/ERROR entry to `.wiki/orchestrator/.synthesis_runs.log`.
+    """
+    if preview:
+        return
+
+    def _load_wiki_config(base_root: Path, target_root: Optional[Path] = None) -> Dict[str, Any]:
+        wiki_base = Path(target_root) if target_root else base_root
+        try:
+            wiki_root = _resolve_wiki_root(wiki_base)
+        except Exception:
+            wiki_root = wiki_base / TEMPLATES_DIR_NAME
+        cfg_path = wiki_root / 'config.json'
+        if not cfg_path.exists():
+            return {}
+        try:
+            return json.loads(cfg_path.read_text(encoding='utf-8'))
+        except Exception:
+            return {}
+
+    wiki_base = Path(target_root) if target_root else repo_root
+    wiki_dir = _resolve_wiki_root(wiki_base)
+    config = _load_wiki_config(repo_root, target_root)
+
+    if not config.get('auto_synthesize_on_persist', True):
+        return
+
+    candidates = [
+        repo_root / 'scripts' / 'synthesize_wiki.py',
+        repo_root / '.github' / 'agents' / 'Orchestrator' / 'scripts' / 'synthesize_wiki.py',
+        Path(__file__).resolve().parents[1] / 'scripts' / 'synthesize_wiki.py',
+    ]
+
+    log_enabled = bool(config.get('synthesis_logging', True))
+    log_path = wiki_dir / '.synthesis_runs.log' if log_enabled else None
+    if log_path:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                cmd = [sys.executable, str(candidate), '--wiki', str(wiki_dir)]
+                try:
+                    capture_output = bool(config.get('synthesis_capture_output', False))
+                    if capture_output:
+                        # Create a timestamped log file under the wiki directory
+                        logs_dir = wiki_dir / 'synthesis_logs'
+                        logs_dir.mkdir(parents=True, exist_ok=True)
+                        ts = datetime.now(timezone.utc).replace(microsecond=0).strftime('%Y%m%dT%H%M%S')
+                        log_file = logs_dir / f"synth-{ts}.log"
+                        try:
+                            fh = open(str(log_file), 'ab')
+                        except Exception as exc:
+                            # If we can't open the file, fall back to DEVNULL
+                            fh = None
+                        try:
+                            env = os.environ.copy()
+                            env['PYTHONUNBUFFERED'] = '1'
+                            # If the wiki target is inside the system temp dir (tests), run synchronously
+                            try:
+                                sys_tmp = tempfile.gettempdir()
+                                wiki_resolved = str(wiki_dir.resolve())
+                            except Exception:
+                                sys_tmp = None
+                                wiki_resolved = str(wiki_dir)
+                            run_sync_for_temp = bool(sys_tmp and wiki_resolved.startswith(str(sys_tmp)))
+                            if run_sync_for_temp:
+                                # Run synchronously so temporary test directories can be cleaned up safely
+                                if fh:
+                                    proc = subprocess.run(cmd, stdout=fh, stderr=fh, env=env, cwd=str(repo_root))
+                                    rc = getattr(proc, 'returncode', None)
+                                else:
+                                    proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, cwd=str(repo_root))
+                                    rc = getattr(proc, 'returncode', None)
+                                if log_enabled:
+                                    try:
+                                        with (log_path).open('a', encoding='utf-8') as handle:
+                                            handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} START sync rc={rc} cmd={' '.join(cmd)} out={str(log_file) if fh else 'none'}\n")
+                                    except Exception:
+                                        pass
+                                try:
+                                    if fh:
+                                        fh.close()
+                                except Exception:
+                                    pass
+                                try:
+                                    retention_days = int(config.get('synthesis_capture_retention_days', 7))
+                                    _prune_synthesis_logs(logs_dir, retention_days)
+                                except Exception:
+                                    pass
+                                return
+                            else:
+                                if fh:
+                                    proc = subprocess.Popen(cmd, stdout=fh, stderr=fh, env=env, cwd=str(repo_root))
+                                else:
+                                    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, cwd=str(repo_root))
+                                if log_enabled:
+                                    try:
+                                        with (log_path).open('a', encoding='utf-8') as handle:
+                                            handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} START pid={proc.pid} cmd={' '.join(cmd)} out={str(log_file) if fh else 'none'}\n")
+                                    except Exception:
+                                        pass
+                                # Parent can close its handle; child retains the file descriptor
+                                try:
+                                    if fh:
+                                        fh.close()
+                                except Exception:
+                                    pass
+                                # Prune old synthesis log files according to retention policy
+                                try:
+                                    retention_days = int(config.get('synthesis_capture_retention_days', 7))
+                                    _prune_synthesis_logs(logs_dir, retention_days)
+                                except Exception:
+                                    pass
+                                return
+                        except Exception as exc:
+                            if fh:
+                                try:
+                                    fh.close()
+                                except Exception:
+                                    pass
+                            try:
+                                retention_days = int(config.get('synthesis_capture_retention_days', 7))
+                                _prune_synthesis_logs(logs_dir, retention_days)
+                            except Exception:
+                                pass
+                            if log_enabled:
+                                try:
+                                    with (log_path).open('a', encoding='utf-8') as handle:
+                                        handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} ERROR {exc}\n")
+                                except Exception:
+                                    pass
+                            return
+                    else:
+                        env = os.environ.copy()
+                        env['PYTHONUNBUFFERED'] = '1'
+                        try:
+                            sys_tmp = tempfile.gettempdir()
+                            wiki_resolved = str(wiki_dir.resolve())
+                        except Exception:
+                            sys_tmp = None
+                            wiki_resolved = str(wiki_dir)
+                        run_sync_for_temp = bool(sys_tmp and wiki_resolved.startswith(str(sys_tmp)))
+                        if run_sync_for_temp:
+                            # run synchronously to avoid background processes holding temp dir handles
+                            proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, cwd=str(repo_root))
+                            rc = getattr(proc, 'returncode', None)
+                            if log_enabled:
+                                try:
+                                    with (log_path).open('a', encoding='utf-8') as handle:
+                                        handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} START sync rc={rc} cmd={' '.join(cmd)}\n")
+                                except Exception:
+                                    pass
+                            return
+                        else:
+                            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, cwd=str(repo_root))
+                            if log_enabled:
+                                try:
+                                    with (log_path).open('a', encoding='utf-8') as handle:
+                                        handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} START pid={proc.pid} cmd={' '.join(cmd)}\n")
+                                except Exception:
+                                    pass
+                            return
+                except Exception as exc:
+                    if log_enabled:
+                        try:
+                            with (log_path).open('a', encoding='utf-8') as handle:
+                                handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} ERROR {exc}\n")
+                        except Exception:
+                            pass
+                    return
+        except Exception:
+            # Fail silently; synthesis is a best-effort background task.
+            return
 
 
 def _build_log_context(
@@ -1074,6 +1341,18 @@ def log_cycle(
             transcript_path = write_transcript(Path(target_root) if target_root else repo_root, transcript)
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        _append_cycle_telemetry_event(
+            base_root=dedupe_root,
+            dispatch_path=dispatch_path,
+            level=level,
+            command=prompt_command,
+            summary=summary,
+            skills=effective_skills,
+            metadata=metadata,
+            preview=preview,
+        )
+        # After persisting telemetry and curated checkpoint, regenerate knowledge pages (non-blocking)
+        _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {
             "level": level,
             "command": prompt_command,
@@ -1095,6 +1374,18 @@ def log_cycle(
         )
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        _append_cycle_telemetry_event(
+            base_root=dedupe_root,
+            dispatch_path=dispatch_path,
+            level='compact',
+            command='/info',
+            summary=summary,
+            skills=effective_skills,
+            metadata=metadata,
+            preview=preview,
+        )
+        # Trigger background knowledge generation for workspace wiki
+        _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {"level": "compact", "command": "/info", "returncode": str(proc.returncode)}
 
     if level == 'full':
@@ -1114,6 +1405,18 @@ def log_cycle(
             transcript_path = write_transcript(Path(target_root) if target_root else repo_root, transcript)
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        _append_cycle_telemetry_event(
+            base_root=dedupe_root,
+            dispatch_path=dispatch_path,
+            level='full',
+            command='/full-log',
+            summary=summary,
+            skills=effective_skills,
+            metadata=metadata,
+            preview=preview,
+        )
+        # Trigger background knowledge generation for workspace wiki
+        _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {
             "level": "full",
             "command": "/full-log",

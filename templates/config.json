@@ -1,0 +1,6 @@
+{
+  "auto_synthesize_on_persist": true,
+  "synthesis_logging": true,
+  "synthesis_capture_output": true,
+  "synthesis_capture_retention_days": 7
+}

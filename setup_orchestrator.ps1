@@ -266,6 +266,46 @@ try {
         } else {
             Write-Info "No templates/Home.md found in expected locations; skipping Home.md wiki install."
         }
+        # Ensure templates/config.json (if present) is moved into the repo wiki at .wiki/orchestrator/config.json
+        try {
+            $cfgCandidates = @()
+            $cfgCandidates += Join-Path $PromptSourceRoot 'templates\config.json'
+            $cfgCandidates += Join-Path $FinalDest 'templates\config.json'
+            $cfgCandidates += Join-Path $PromptSourceRoot 'config.json'
+            $cfgCandidates += Join-Path $FinalDest 'config.json'
+            $cfgCandidates += Join-Path $RepoRoot 'templates\config.json'
+            $cfgCandidates += Join-Path $RepoRoot 'config.json'
+
+            $foundCfg = $null
+            foreach ($cc in $cfgCandidates) {
+                if ([string]::IsNullOrEmpty($cc)) { continue }
+                if (Test-Path $cc) { $foundCfg = $cc; break }
+            }
+
+            if ($foundCfg) {
+                $destCfg = Join-Path $wikiDir 'config.json'
+                Copy-Item -Path $foundCfg -Destination $destCfg -Force
+                Write-Info "Installed wiki config.json to ${destCfg} (from ${foundCfg})"
+
+                # Remove the source config.json when it was part of the installed agent/package
+                $shouldRemoveCfgSource = $false
+                if ($foundCfg -like "${FinalDest}*") { $shouldRemoveCfgSource = $true }
+                if ($RemovePromptSource) { $shouldRemoveCfgSource = $true }
+
+                if ($shouldRemoveCfgSource) {
+                    try {
+                        Remove-Item -Force -LiteralPath $foundCfg
+                        Write-Info "Removed source config.json at ${foundCfg} after moving to wiki"
+                    } catch {
+                        Write-Warn "Failed to remove source config.json at ${foundCfg}: $_"
+                    }
+                }
+            } else {
+                Write-Info "No templates/config.json found in expected locations; skipping config.json wiki install."
+            }
+        } catch {
+            Write-Warn "Failed while installing config.json to wiki: $_"
+        }
     } catch {
         Write-Warn "Failed while installing Home.md to wiki: $_"
     }

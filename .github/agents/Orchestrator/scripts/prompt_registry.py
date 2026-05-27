@@ -231,10 +231,42 @@ def get_prompt_backed_commands() -> dict[str, PromptCommandSpec]:
 
 
 def discover_prompt_files(repo_root: Path) -> list[str]:
-    prompts_dir = repo_root / PROMPTS_DIR
-    if not prompts_dir.exists():
-        return []
-    return sorted(path.name for path in prompts_dir.glob('*.prompt.md'))
+    """Discover prompt template filenames.
+
+    The repository layout sometimes places prompt templates under `.github/prompts`
+    (when the Orchestrator is packaged as a subfolder) or under `prompts/` at the
+    repository root. This helper checks both locations and returns the union.
+    """
+    # Search upwards from the provided repo_root to find the first directory that
+    # contains prompt templates. This supports both repository layouts where the
+    # Orchestrator is nested under `.github/agents/Orchestrator` and layouts where
+    # the Orchestrator lives at the repository root.
+    for candidate_root in (repo_root, *repo_root.parents):
+        found = []
+        for candidate_dir in (candidate_root / PROMPTS_DIR, candidate_root / Path('prompts')):
+            if candidate_dir.exists():
+                found.extend(path.name for path in candidate_dir.glob('*.prompt.md'))
+        if found:
+            return sorted(set(found))
+
+    # As a last resort, look for an Orchestrator subfolder under the passed
+    # repo_root and prefer its prompts directory if present. This avoids
+    # picking up unrelated prompt templates from other projects on the disk.
+    for orch in repo_root.glob('**/Orchestrator'):
+        for candidate_dir in (orch / '.github' / 'prompts', orch / 'prompts'):
+            if candidate_dir.exists():
+                return sorted({p.name for p in candidate_dir.glob('*.prompt.md')})
+
+    # If there's no Orchestrator folder, fall back to scanning for any prompts
+    # directories but limit results to avoid harvesting unrelated workspaces.
+    found = []
+    for candidate_dir in repo_root.glob('**/.github/prompts'):
+        found.extend(path.name for path in Path(candidate_dir).glob('*.prompt.md'))
+    for candidate_dir in repo_root.glob('**/prompts'):
+        if candidate_dir.name == 'prompts' and candidate_dir.parent.name == '.github':
+            continue
+        found.extend(path.name for path in Path(candidate_dir).glob('*.prompt.md'))
+    return sorted(set(found))
 
 
 def build_manifest(repo_root: Path) -> list[dict[str, Any]]:

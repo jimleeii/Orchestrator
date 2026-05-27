@@ -34,6 +34,14 @@ _RE_DATE = re.compile(r"(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d
 _RE_MODEL_SELECTION = re.compile(r"selected_model=([^|]+)")
 _RE_CONTRACT_SCORE = re.compile(r"(\d+(?:\.\d+)?)")
 
+_TELEMETRY_INDEX_SCHEMA_VERSION = 'orchestrator.telemetry.index.v1'
+_TELEMETRY_SUMMARY_CACHE_SCHEMA_VERSION = 'orchestrator.telemetry.summary-cache.v1'
+_TELEMETRY_SUMMARY_CACHE_NAME = 'summary-cache.json'
+_TELEMETRY_SUMMARY_CACHE_TTL = timedelta(hours=24)
+_TELEMETRY_REQUIRED_FIELDS = ('recorded_at_utc', 'dispatch_path', 'level', 'command', 'cycle_id', 'fingerprint')
+_TELEMETRY_MAX_ANOMALY_SAMPLES = 5
+_RE_CACHE_UTC = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$')
+
 
 @dataclass
 class EntryRecord:
@@ -83,6 +91,21 @@ def _parse_datetime(value: str) -> datetime | None:
             return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_cached_utc(value: str) -> datetime | None:
+    candidate = (value or '').strip()
+    if not candidate or not _RE_CACHE_UTC.fullmatch(candidate):
+        return None
+    if candidate.endswith('Z'):
+        candidate = candidate[:-1] + '+00:00'
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
     return parsed.astimezone(timezone.utc)
 
 
@@ -174,6 +197,212 @@ def _success_value(value: str) -> bool | None:
 
 def _counter_dict(counter: Counter[str]) -> dict[str, int]:
     return dict(counter.most_common())
+
+
+def _empty_telemetry_summary(source_path: str, source_state: str = 'missing') -> dict[str, Any]:
+    return {
+        'schema_version': _TELEMETRY_INDEX_SCHEMA_VERSION,
+        'generated_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        'source_path': source_path,
+        'source_state': source_state,
+        'record_count': 0,
+        'unique_cycle_count': 0,
+        'dispatch_counts': {},
+        'level_counts': {},
+        'command_counts': {},
+        'duplicate_fingerprint_count': 0,
+        'incomplete_record_count': 0,
+        'anomaly_samples': [],
+    }
+
+
+def _telemetry_summary_cache_path(wiki: Path) -> Path:
+    return wiki / 'telemetry' / _TELEMETRY_SUMMARY_CACHE_NAME
+
+
+def _telemetry_source_signature(telemetry_path: Path, source_path: str) -> dict[str, Any]:
+    stat_result = telemetry_path.stat()
+    return {
+        'source_path': source_path,
+        'st_mtime_ns': stat_result.st_mtime_ns,
+        'st_size': stat_result.st_size,
+    }
+
+
+def _load_cached_telemetry_summary(cache_path: Path, source_signature: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        cache_data = json.loads(cache_path.read_text(encoding='utf-8', errors='replace'))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(cache_data, dict):
+        return None
+    if cache_data.get('schema_version') != _TELEMETRY_SUMMARY_CACHE_SCHEMA_VERSION:
+        return None
+    if cache_data.get('source_signature') != source_signature:
+        return None
+
+    cached_utc = _parse_cached_utc(str(cache_data.get('cached_utc', '') or ''))
+    if cached_utc is None:
+        return None
+    now = datetime.now(timezone.utc)
+    if cached_utc > now:
+        return None
+    if now - cached_utc > _TELEMETRY_SUMMARY_CACHE_TTL:
+        return None
+
+    telemetry_summary = cache_data.get('telemetry_summary')
+    return telemetry_summary if isinstance(telemetry_summary, dict) else None
+
+
+def _write_cached_telemetry_summary(cache_path: Path, source_signature: dict[str, Any], telemetry_summary: dict[str, Any]) -> None:
+    payload = {
+        'schema_version': _TELEMETRY_SUMMARY_CACHE_SCHEMA_VERSION,
+        'source_signature': source_signature,
+        'cached_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        'telemetry_summary': telemetry_summary,
+    }
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    except OSError:
+        return
+
+
+def _collect_telemetry_summary(telemetry_path: Path, source_path: str) -> dict[str, Any]:
+    summary = _empty_telemetry_summary(source_path, 'present_no_valid_records')
+
+    if not telemetry_path.is_file():
+        return _empty_telemetry_summary(source_path)
+
+    try:
+        text = telemetry_path.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return summary
+
+    dispatch_counts: Counter[str] = Counter()
+    level_counts: Counter[str] = Counter()
+    command_counts: Counter[str] = Counter()
+    cycle_ids: set[str] = set()
+    fingerprint_counts: Counter[str] = Counter()
+    fingerprint_record_indices: dict[str, list[int]] = defaultdict(list)
+    anomaly_samples: list[dict[str, Any]] = []
+
+    for record_index, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            summary['incomplete_record_count'] += 1
+            if len(anomaly_samples) < _TELEMETRY_MAX_ANOMALY_SAMPLES:
+                anomaly_samples.append({
+                    'type': 'invalid_json',
+                    'record_index': record_index,
+                    'reason': getattr(exc, 'msg', 'invalid JSON'),
+                })
+            continue
+
+        if not isinstance(payload, dict):
+            summary['incomplete_record_count'] += 1
+            if len(anomaly_samples) < _TELEMETRY_MAX_ANOMALY_SAMPLES:
+                anomaly_samples.append({
+                    'type': 'non_object_record',
+                    'record_index': record_index,
+                    'reason': 'expected JSON object',
+                })
+            continue
+
+        summary['record_count'] += 1
+
+        extracted: dict[str, str] = {}
+        missing_fields: list[str] = []
+        for field in _TELEMETRY_REQUIRED_FIELDS:
+            value = payload.get(field, '')
+            text_value = str(value).strip() if value is not None else ''
+            extracted[field] = text_value
+            if not text_value:
+                missing_fields.append(field)
+
+        dispatch_path = extracted['dispatch_path']
+        level = extracted['level']
+        command = extracted['command']
+        cycle_id = extracted['cycle_id']
+        fingerprint = extracted['fingerprint']
+
+        if cycle_id:
+            cycle_ids.add(cycle_id)
+        if dispatch_path:
+            dispatch_counts[dispatch_path] += 1
+        if level:
+            level_counts[level] += 1
+        if command:
+            command_counts[command] += 1
+        if fingerprint:
+            fingerprint_counts[fingerprint] += 1
+            fingerprint_record_indices[fingerprint].append(record_index)
+
+        if missing_fields:
+            summary['incomplete_record_count'] += 1
+            if len(anomaly_samples) < _TELEMETRY_MAX_ANOMALY_SAMPLES:
+                anomaly: dict[str, Any] = {
+                    'type': 'incomplete_record',
+                    'record_index': record_index,
+                    'missing_fields': missing_fields,
+                }
+                if cycle_id:
+                    anomaly['cycle_id'] = cycle_id
+                if fingerprint:
+                    anomaly['fingerprint'] = fingerprint
+                anomaly_samples.append(anomaly)
+
+    duplicate_fingerprint_count = 0
+    for fingerprint, occurrences in fingerprint_counts.items():
+        if occurrences > 1:
+            duplicate_fingerprint_count += 1
+            if len(anomaly_samples) < _TELEMETRY_MAX_ANOMALY_SAMPLES:
+                anomaly_samples.append({
+                    'type': 'duplicate_fingerprint',
+                    'fingerprint': fingerprint,
+                    'occurrences': occurrences,
+                    'record_indices': list(fingerprint_record_indices.get(fingerprint, [])),
+                })
+
+    summary['unique_cycle_count'] = len(cycle_ids)
+    summary['dispatch_counts'] = _counter_dict(dispatch_counts)
+    summary['level_counts'] = _counter_dict(level_counts)
+    summary['command_counts'] = _counter_dict(command_counts)
+    summary['duplicate_fingerprint_count'] = duplicate_fingerprint_count
+    summary['anomaly_samples'] = anomaly_samples
+    if summary['record_count'] > 0:
+        summary['source_state'] = 'present_with_records'
+    return summary
+
+
+def _collect_cached_telemetry_summary(wiki: Path) -> dict[str, Any]:
+    telemetry_path = wiki / 'telemetry' / 'cycles.jsonl'
+    source_path = telemetry_path.relative_to(wiki).as_posix()
+
+    if not telemetry_path.is_file():
+        return _empty_telemetry_summary(source_path)
+
+    try:
+        source_signature = _telemetry_source_signature(telemetry_path, source_path)
+    except OSError:
+        return _empty_telemetry_summary(source_path, 'present_no_valid_records')
+
+    cache_path = _telemetry_summary_cache_path(wiki)
+    cached_summary = _load_cached_telemetry_summary(cache_path, source_signature)
+    if cached_summary is not None:
+        summary = dict(cached_summary)
+        summary['generated_utc'] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        return summary
+
+    summary = _collect_telemetry_summary(telemetry_path, source_path)
+    _write_cached_telemetry_summary(cache_path, source_signature, summary)
+    return summary
 
 
 def _pattern_signal_summary(pattern_records: Iterable[EntryRecord]) -> list[dict[str, Any]]:
@@ -389,6 +618,7 @@ def collect_metrics(wiki: Path, cycles: int = 30, stale_days: int = 30) -> dict[
         'model_quality': _model_quality(behavior_records),
         'routing_quality': _routing_quality(behavior_records, skill_records),
         'contract_feedback': contract_feedback,
+        'telemetry_summary': _collect_cached_telemetry_summary(wiki),
     }
 
 

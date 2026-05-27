@@ -126,6 +126,7 @@ REQUEST_TEXT_KEYS = (
     'summary',
 )
 FULL_LOG_COMMANDS = {'/full-log', '/all-log'}
+TELEMETRY_CYCLE_FILENAME = 'cycles.jsonl'
 CONTINUATION_REQUEST_RE = re.compile(
     r'^(?:please\s+)?(?:approve(?:d)?|perceed|proceed|go(?:\s+ahead)?|continue|carry\s+on|keep\s+going)(?:\s+please)?[.!?]*$',
     re.IGNORECASE,
@@ -482,6 +483,63 @@ def _dedupe_store_path(base_root: Path) -> Path:
     return _resolve_wiki_root(base_root) / '.curated-checkpoint-dedupe.json'
 
 
+def _telemetry_cycle_path(base_root: Path) -> Path:
+    return _resolve_wiki_root(base_root) / 'telemetry' / TELEMETRY_CYCLE_FILENAME
+
+
+def _build_cycle_telemetry_fingerprint(payload: Dict[str, Any]) -> str:
+    fingerprint_payload = {
+        'dispatch_path': _first_text(payload.get('dispatch_path')),
+        'level': _first_text(payload.get('level')),
+        'command': _first_text(payload.get('command')),
+        'cycle_id': _first_text(payload.get('cycle_id')),
+        'session_id': _first_text(payload.get('session_id')),
+        'request_group_id': _first_text(payload.get('request_group_id')),
+        'dedupe_key': _first_text(payload.get('dedupe_key')),
+    }
+    digest = hashlib.sha1(json.dumps(fingerprint_payload, sort_keys=True, ensure_ascii=True).encode('utf-8')).hexdigest()
+    return f"sha1:{digest}"
+
+
+def _append_cycle_telemetry_event(
+    base_root: Path,
+    dispatch_path: str,
+    level: str,
+    command: str,
+    summary: str,
+    skills: List[str],
+    metadata: Dict[str, Any],
+    preview: bool,
+) -> None:
+    if preview:
+        return
+
+    payload: Dict[str, Any] = {
+        'schema_version': 'orchestrator.telemetry.cycle.v1',
+        'event_type': 'cycle.persisted',
+        'recorded_at_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        'dispatch_path': dispatch_path,
+        'level': level,
+        'command': command,
+        'persisted': True,
+        'preview': bool(preview),
+        'cycle_id': _first_text(metadata.get('cycle_id')),
+        'session_id': _first_text(metadata.get('session_id')),
+        'request_group_id': _first_text(metadata.get('request_group_id')),
+        'dedupe_key': _first_text(metadata.get('dedupe_key')),
+        'curated_checkpoint': bool(metadata.get('curated_checkpoint')),
+        'summary': _normalize_inline_text(summary),
+        'skills_used': list(skills),
+    }
+    payload['fingerprint'] = _build_cycle_telemetry_fingerprint(payload)
+
+    path = _telemetry_cycle_path(base_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = _utf8_backslashreplace_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    with path.open('a', encoding='utf-8') as handle:
+        handle.write(line + '\n')
+
+
 def _load_dedupe_store(base_root: Path) -> Dict[str, str]:
     path = _dedupe_store_path(base_root)
     if not path.exists():
@@ -708,6 +766,31 @@ def _run_log_command(
         cmd += ['--preview']
     # Use run so exceptions propagate to callers for the orchestrator to handle
     return subprocess.run(cmd, check=True)
+
+
+def _run_synthesize_wiki(repo_root: Path, target_root: Optional[Path] = None, preview: bool = False) -> None:
+    """Fire-and-forget run of scripts/synthesize_wiki.py to regenerate knowledge pages.
+    Does nothing in preview mode or when the script is absent.
+    """
+    if preview:
+        return
+    candidates = [
+        repo_root / 'scripts' / 'synthesize_wiki.py',
+        repo_root / '.github' / 'agents' / 'Orchestrator' / 'scripts' / 'synthesize_wiki.py',
+        Path(__file__).resolve().parents[1] / 'scripts' / 'synthesize_wiki.py',
+    ]
+    wiki_base = Path(target_root) if target_root else repo_root
+    wiki_dir = wiki_base / '.wiki' / 'orchestrator'
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                # Start the synthesize_wiki script asynchronously and don't block the caller.
+                subprocess.Popen([sys.executable, str(candidate), '--wiki', str(wiki_dir)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+        except Exception:
+            # Fail silently; synthesis is a best-effort background task.
+            return
 
 
 def _build_log_context(
@@ -1074,6 +1157,18 @@ def log_cycle(
             transcript_path = write_transcript(Path(target_root) if target_root else repo_root, transcript)
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        _append_cycle_telemetry_event(
+            base_root=dedupe_root,
+            dispatch_path=dispatch_path,
+            level=level,
+            command=prompt_command,
+            summary=summary,
+            skills=effective_skills,
+            metadata=metadata,
+            preview=preview,
+        )
+        # After persisting telemetry and curated checkpoint, regenerate knowledge pages (non-blocking)
+        _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {
             "level": level,
             "command": prompt_command,
@@ -1095,6 +1190,18 @@ def log_cycle(
         )
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        _append_cycle_telemetry_event(
+            base_root=dedupe_root,
+            dispatch_path=dispatch_path,
+            level='compact',
+            command='/info',
+            summary=summary,
+            skills=effective_skills,
+            metadata=metadata,
+            preview=preview,
+        )
+        # Trigger background knowledge generation for workspace wiki
+        _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {"level": "compact", "command": "/info", "returncode": str(proc.returncode)}
 
     if level == 'full':
@@ -1114,6 +1221,18 @@ def log_cycle(
             transcript_path = write_transcript(Path(target_root) if target_root else repo_root, transcript)
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        _append_cycle_telemetry_event(
+            base_root=dedupe_root,
+            dispatch_path=dispatch_path,
+            level='full',
+            command='/full-log',
+            summary=summary,
+            skills=effective_skills,
+            metadata=metadata,
+            preview=preview,
+        )
+        # Trigger background knowledge generation for workspace wiki
+        _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {
             "level": "full",
             "command": "/full-log",
