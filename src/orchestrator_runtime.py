@@ -3,11 +3,13 @@ import os
 import argparse
 import subprocess
 import sys
+import sqlite3
 import uuid
 import re
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Callable
 
 try:
@@ -32,7 +34,32 @@ except Exception:
         classify_health_observation,
         get_workspace_health_registry,
     )
+try:
+    from scripts.search_wiki import search_wiki_pages
+except Exception:
+    try:
+        from search_wiki import search_wiki_pages  # type: ignore
+    except Exception:
+        search_wiki_pages = None  # type: ignore[assignment]
+try:
+    from scripts.continuation_detector import detect_continuation
+except Exception:
+    try:
+        from continuation_detector import detect_continuation  # type: ignore
+    except Exception:
+        detect_continuation = None  # type: ignore[assignment]
+try:
+    from scripts.continuation_planner import generate_next_steps_plan
+except Exception:
+    try:
+        from continuation_planner import generate_next_steps_plan  # type: ignore
+    except Exception:
+        generate_next_steps_plan = None  # type: ignore[assignment]
 from src.model_resolver import resolve_model_for_subagent
+try:
+    from src.orchestrator_memory import derive_continuity_key, resolve_continuity_db_path
+except Exception:
+    from orchestrator_memory import derive_continuity_key, resolve_continuity_db_path  # type: ignore
 from src.skill_loader import discover_skills, save_manifest
 from src.policy_reloader import PolicyReloader
 
@@ -751,6 +778,658 @@ def _merge_dispatch_metadata(
     return merged
 
 
+def _compact_context_text(value: Any, limit: int = 160) -> str:
+    text = _first_text(value)
+    if not text:
+        return ""
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _resolve_dispatch_workspace_root(metadata: Dict[str, Any], spawn_payload: Dict[str, Any]) -> Path:
+    for source in (metadata, spawn_payload):
+        if not isinstance(source, dict):
+            continue
+
+        for key in ("workspace_root", "project_root", "repo_root"):
+            candidate = _compact_context_text(source.get(key), 256)
+            if not candidate:
+                continue
+            try:
+                resolved = Path(candidate).expanduser().resolve(strict=False)
+            except Exception:
+                continue
+            parts = [part.lower() for part in resolved.parts[-2:]]
+            if parts == [".wiki", "orchestrator"]:
+                return resolved.parent.parent
+            return resolved
+
+        wiki_root = _compact_context_text(source.get("wiki_root"), 256)
+        if not wiki_root:
+            continue
+        try:
+            resolved = Path(wiki_root).expanduser().resolve(strict=False)
+        except Exception:
+            continue
+        parts = [part.lower() for part in resolved.parts[-2:]]
+        if parts == [".wiki", "orchestrator"]:
+            return resolved.parent.parent
+        if resolved.name == ".wiki" and resolved.parent != resolved:
+            return resolved.parent
+        return resolved
+
+    return Path.cwd()
+
+
+def _build_prior_context_query(
+    prompt: str,
+    metadata: Dict[str, Any],
+    subagent_name: Optional[str] = None,
+    model_resolution: Optional[Dict[str, Any]] = None,
+) -> str:
+    query_parts = [
+        _compact_context_text(prompt, 120),
+        _compact_context_text(metadata.get("project_request"), 120),
+        _compact_context_text(metadata.get("request_title"), 80),
+        _compact_context_text(metadata.get("normalized_request"), 120),
+        _compact_context_text(metadata.get("summary"), 120),
+        _compact_context_text(subagent_name, 40),
+    ]
+    if isinstance(model_resolution, dict):
+        query_parts.append(_compact_context_text(model_resolution.get("model"), 40))
+        query_parts.append(_compact_context_text(model_resolution.get("selected_model"), 40))
+    query = " ".join(part for part in query_parts if part)
+    return " ".join(query.split())[:280]
+
+
+def _prior_context_item_identity(item: Dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        _normalize_text(item.get("title")),
+        _normalize_text(item.get("detail")),
+        _normalize_text(item.get("path")),
+    )
+
+
+def _prior_context_item_from_cache_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    title = _compact_context_text(
+        _first_text(row.get("request_title"), row.get("project_request"), row.get("normalized_request"), row.get("summary")),
+        96,
+    )
+    detail_bits: List[str] = []
+    summary = _compact_context_text(row.get("summary"), 120)
+    if summary and summary.casefold() != title.casefold():
+        detail_bits.append(summary)
+    for label, key, limit in (
+        ("change", "change_applied", 120),
+        ("result", "observed_result", 120),
+        ("decision", "decision", 80),
+        ("next", "next_action", 80),
+    ):
+        text = _compact_context_text(row.get(key), limit)
+        if not text:
+            continue
+        detail_bits.append(f"{label}: {text}")
+
+    detail = "; ".join(detail_bits[:3])
+    if not title and not detail:
+        return None
+
+    return {
+        "source": "continuity_cache",
+        "title": title or "continuity checkpoint",
+        "detail": detail,
+        "path": "",
+    }
+
+
+def _prior_context_item_from_wiki_result(result: Any) -> Optional[Dict[str, Any]]:
+    title = _compact_context_text(getattr(result, "title", None), 96)
+    path = _compact_context_text(getattr(result, "path", None), 120)
+    snippet = _compact_context_text(getattr(result, "snippet", None), 180)
+    if not title and not path and not snippet:
+        return None
+
+    return {
+        "source": "wiki_search",
+        "title": title or path or "wiki result",
+        "detail": snippet,
+        "path": path,
+    }
+
+
+def _format_prior_context_block(items: List[Dict[str, Any]]) -> str:
+    if not items:
+        return ""
+
+    lines = ["## Prior Context (Auto-Retrieved)"]
+    for item in items[:3]:
+        source = _normalize_text(item.get("source"))
+        label = "cache" if source == "continuity_cache" else "wiki"
+        title = _compact_context_text(item.get("title"), 96)
+        detail = _compact_context_text(item.get("detail"), 180)
+        path = _compact_context_text(item.get("path"), 120)
+
+        line = f"- {label}"
+        if title:
+            line += f": `{title}`"
+        if path and source == "wiki_search":
+            line += f" ({path})"
+        if detail:
+            line += f" — {detail}"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+_PRIOR_CONTEXT_CACHE_SAMPLE_LIMIT = 48
+_PRIOR_CONTEXT_CACHE_EXACT_LIMIT = 12
+_PRIOR_CONTEXT_QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "available",
+    "be",
+    "been",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "here",
+    "how",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "just",
+    "may",
+    "might",
+    "must",
+    "no",
+    "not",
+    "of",
+    "on",
+    "only",
+    "or",
+    "our",
+    "please",
+    "prior",
+    "project",
+    "context",
+    "request",
+    "summary",
+    "title",
+    "normalized",
+    "should",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "this",
+    "those",
+    "to",
+    "too",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "why",
+    "will",
+    "with",
+    "without",
+    "would",
+    "you",
+    "your",
+}
+
+
+def _prior_context_query_terms(query: str) -> List[str]:
+    terms: List[str] = []
+    seen: set[str] = set()
+    for raw_term in re.split(r"[^A-Za-z0-9]+", _normalize_text(query)):
+        term = raw_term.strip()
+        if not term or len(term) < 3 or term in _PRIOR_CONTEXT_QUERY_STOPWORDS:
+            continue
+        if term in seen:
+            continue
+        seen.add(term)
+        terms.append(term)
+    return terms[:24]
+
+
+def _prior_context_row_text(row: Dict[str, Any], *keys: str) -> str:
+    return " ".join(
+        text
+        for text in (_normalize_text(row.get(key)) for key in keys)
+        if text
+    )
+
+
+def _score_prior_context_row(
+    row: Dict[str, Any],
+    query_terms: List[str],
+    continuity_key: str,
+    request_group_id: str,
+) -> int:
+    score = 0
+    subject_text = _prior_context_row_text(row, "project_request", "request_title", "normalized_request")
+    detail_texts = (
+        (_prior_context_row_text(row, "summary"), 4),
+        (_prior_context_row_text(row, "change_applied"), 4),
+        (_prior_context_row_text(row, "observed_result"), 4),
+        (_prior_context_row_text(row, "next_action"), 3),
+        (_prior_context_row_text(row, "decision"), 2),
+    )
+
+    for term in query_terms:
+        if term in subject_text:
+            score += 6
+        for text, weight in detail_texts:
+            if term in text:
+                score += weight
+
+    if continuity_key and _normalize_text(row.get("continuity_key")) == _normalize_text(continuity_key):
+        score += 30
+    if request_group_id and _normalize_text(row.get("request_group_id")) == _normalize_text(request_group_id):
+        score += 18
+
+    return score
+
+
+def _collect_prior_context_cache_rows(
+    connection: sqlite3.Connection,
+    continuity_key: str,
+    request_group_id: str,
+) -> List[Dict[str, Any]]:
+    candidate_rows: Dict[int, Dict[str, Any]] = {}
+
+    def _add_rows(rows: List[sqlite3.Row]) -> None:
+        for row in rows:
+            try:
+                row_id = int(row["id"])
+            except Exception:
+                continue
+            candidate_rows[row_id] = dict(row)
+
+    try:
+        sample_rows = connection.execute(
+            f"""
+            SELECT id, continuity_key, request_group_id, project_request, request_title,
+                   normalized_request, summary, change_applied, observed_result,
+                   decision, next_action, created_at_utc
+            FROM continuity_checkpoints
+            ORDER BY created_at_utc DESC, id DESC
+            LIMIT ?
+            """,
+            (_PRIOR_CONTEXT_CACHE_SAMPLE_LIMIT,),
+        ).fetchall()
+        _add_rows(sample_rows)
+    except Exception:
+        pass
+
+    if continuity_key:
+        try:
+            exact_rows = connection.execute(
+                f"""
+                SELECT id, continuity_key, request_group_id, project_request, request_title,
+                       normalized_request, summary, change_applied, observed_result,
+                       decision, next_action, created_at_utc
+                FROM continuity_checkpoints
+                WHERE continuity_key = ?
+                ORDER BY created_at_utc DESC, id DESC
+                LIMIT ?
+                """,
+                (continuity_key, _PRIOR_CONTEXT_CACHE_EXACT_LIMIT),
+            ).fetchall()
+            _add_rows(exact_rows)
+        except Exception:
+            pass
+
+    if request_group_id:
+        try:
+            request_group_rows = connection.execute(
+                f"""
+                SELECT id, continuity_key, request_group_id, project_request, request_title,
+                       normalized_request, summary, change_applied, observed_result,
+                       decision, next_action, created_at_utc
+                FROM continuity_checkpoints
+                WHERE request_group_id = ?
+                ORDER BY created_at_utc DESC, id DESC
+                LIMIT ?
+                """,
+                (request_group_id, _PRIOR_CONTEXT_CACHE_EXACT_LIMIT),
+            ).fetchall()
+            _add_rows(request_group_rows)
+        except Exception:
+            pass
+
+    return list(candidate_rows.values())
+
+
+def _collect_prior_context_payload(
+    prompt: str,
+    metadata: Dict[str, Any],
+    spawn_payload: Dict[str, Any],
+    subagent_name: Optional[str],
+    model_resolution: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    workspace_root = _resolve_dispatch_workspace_root(metadata, spawn_payload)
+    query = _build_prior_context_query(
+        prompt,
+        metadata,
+        subagent_name=subagent_name,
+        model_resolution=model_resolution,
+    )
+    query_terms = _prior_context_query_terms(query)
+    request_group_id = _normalize_text(metadata.get("request_group_id"))
+
+    items: List[Dict[str, Any]] = []
+    cache_items: List[Dict[str, Any]] = []
+    wiki_contributed = False
+
+    try:
+        continuity_key = derive_continuity_key(metadata)
+    except Exception:
+        continuity_key = ""
+
+    if query_terms or continuity_key or request_group_id:
+        try:
+            db_path = resolve_continuity_db_path(root=workspace_root)
+            if db_path.exists():
+                with sqlite3.connect(db_path) as connection:
+                    connection.row_factory = sqlite3.Row
+                    rows = _collect_prior_context_cache_rows(connection, continuity_key, request_group_id)
+                scored_rows = sorted(
+                    (
+                        (
+                            _score_prior_context_row(row, query_terms, continuity_key, request_group_id),
+                            _normalize_text(row.get("created_at_utc")),
+                            int(row.get("id") or 0),
+                            row,
+                        )
+                        for row in rows
+                    ),
+                    key=lambda item: (item[0], item[1], item[2]),
+                    reverse=True,
+                )
+                cache_seen = set()
+                for score, _, _, row in scored_rows:
+                    if score <= 0:
+                        continue
+                    item = _prior_context_item_from_cache_row(row)
+                    if item is None:
+                        continue
+                    identity = _prior_context_item_identity(item)
+                    if identity in cache_seen:
+                        continue
+                    cache_seen.add(identity)
+                    cache_items.append(item)
+                    if len(cache_items) >= 3:
+                        break
+        except Exception:
+            cache_items = []
+
+    items = list(cache_items)
+    seen = {_prior_context_item_identity(item) for item in items}
+
+    if len(items) < 3 and query and search_wiki_pages is not None:
+        wiki_root = workspace_root / ".wiki" / "orchestrator"
+        if wiki_root.exists():
+            try:
+                wiki_results = search_wiki_pages(wiki_root, query, limit=5, include_transcripts=False)
+            except Exception:
+                wiki_results = []
+
+            for result in wiki_results:
+                if len(items) >= 3:
+                    break
+                item = _prior_context_item_from_wiki_result(result)
+                if item is None:
+                    continue
+                identity = _prior_context_item_identity(item)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                items.append(item)
+                wiki_contributed = True
+
+    if not items:
+        source = "none"
+    elif cache_items:
+        source = "continuity_cache"
+    elif wiki_contributed:
+        source = "wiki_search"
+    else:
+        source = "none"
+
+    bounded_items = items[:3]
+    return {
+        "items": bounded_items,
+        "markdown": _format_prior_context_block(bounded_items),
+        "context_retrieval_source": source,
+        "context_fact_count": len(bounded_items),
+    }
+
+
+def _build_continuation_detection_summary(
+    user: str,
+    metadata: Dict[str, Any],
+    prior_context: Dict[str, Any],
+    dispatch: str,
+    subagent_name: Optional[str],
+) -> Dict[str, Any]:
+    prior_items = [item for item in prior_context.get("items", []) if isinstance(item, dict)]
+    project_candidates = _merge_unique_text_lists(
+        metadata.get("prior_project_name"),
+        metadata.get("prior_project_request"),
+        metadata.get("prior_request_title"),
+        *(item.get("title") for item in prior_items),
+    )
+
+    artifact_paths: List[str] = []
+    artifact_stems: List[str] = []
+    for item in prior_items:
+        path = _compact_context_text(item.get("path"), 120)
+        if not path:
+            continue
+        artifact_paths.append(path)
+        try:
+            artifact_stem = Path(path).stem
+        except Exception:
+            artifact_stem = ""
+        if artifact_stem:
+            artifact_stems.append(artifact_stem)
+
+    prior_blockers = _merge_unique_text_lists(
+        metadata.get("blockers_risks"),
+        metadata.get("blockers"),
+        metadata.get("risks"),
+        metadata.get("open_blockers"),
+        metadata.get("open_issues"),
+        metadata.get("known_blockers"),
+        metadata.get("prior_blockers"),
+    )
+    for item in prior_items:
+        detail = _compact_context_text(item.get("detail"), 180)
+        if detail and re.search(r"\b(blocked|blocking|wait(?:ing)?|pending|risk|issue|todo|to do)\b", detail, re.IGNORECASE):
+            prior_blockers.append(detail)
+
+    return {
+        "current_user": _compact_context_text(user, 80),
+        "prior_user": _compact_context_text(_first_text(metadata.get("prior_user"), metadata.get("session_user"), metadata.get("requested_by"), metadata.get("owner")), 80),
+        "current_project_request": _compact_context_text(metadata.get("project_request"), 160),
+        "current_request_title": _compact_context_text(metadata.get("request_title"), 120),
+        "current_summary": _compact_context_text(metadata.get("summary"), 160),
+        "request_group_id": _compact_context_text(metadata.get("request_group_id"), 80),
+        "session_id": _compact_context_text(metadata.get("session_id"), 80),
+        "cycle_id": _compact_context_text(metadata.get("cycle_id"), 80),
+        "dispatch": _compact_context_text(dispatch, 40),
+        "subagent": _compact_context_text(subagent_name, 80),
+        "selected_model": _compact_context_text(metadata.get("selected_model"), 80),
+        "cycle_selected_model": _compact_context_text(metadata.get("cycle_selected_model"), 80),
+        "context_retrieval_source": _compact_context_text(prior_context.get("context_retrieval_source"), 40),
+        "context_fact_count": prior_context.get("context_fact_count", 0),
+        "prior_context_markdown": _compact_context_text(prior_context.get("markdown"), 1200),
+        "prior_context_items": prior_items[:3],
+        "project_name_candidates": project_candidates[:6],
+        "prior_artifact_paths": artifact_paths[:6],
+        "prior_artifact_stems": _merge_unique_text_lists(artifact_stems)[:6],
+        "prior_blockers": _merge_unique_text_lists(prior_blockers)[:3],
+    }
+
+
+def _empty_continuation_detection_result() -> Dict[str, Any]:
+    return {
+        "is_continuation": False,
+        "confidence": 0.0,
+        "continuation_type": "none",
+        "signals": [],
+        "prior_blockers": [],
+        "suggested_next_steps": [],
+    }
+
+
+def _continuation_plan_item_label(item: Any) -> str:
+    if not isinstance(item, dict):
+        return _compact_context_text(item, 96)
+
+    for key in ("title", "label", "name", "path", "detail", "summary", "content", "file", "artifact"):
+        label = _compact_context_text(item.get(key), 96)
+        if not label:
+            continue
+        if key == "path":
+            try:
+                path = Path(label)
+                path_label = _compact_context_text(path.name or path.stem, 96)
+                if path_label:
+                    return path_label
+            except Exception:
+                pass
+        return label
+    return ""
+
+
+def _continuation_plan_artifacts(prior_context: Dict[str, Any], continuation_summary: Dict[str, Any]) -> List[str]:
+    labels: List[str] = []
+    seen: set[str] = set()
+    for source in (prior_context.get("items", []), continuation_summary.get("prior_context_items", [])):
+        for item in source if isinstance(source, list) else []:
+            label = _continuation_plan_item_label(item)
+            if not label:
+                continue
+            key = label.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            labels.append(label)
+            if len(labels) >= 3:
+                return labels
+    return labels
+
+
+def _build_continuation_plan_inputs(
+    prompt: str,
+    prior_context: Dict[str, Any],
+    continuation_summary: Dict[str, Any],
+    continuation_detection: Dict[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    prior_items = [item for item in prior_context.get("items", []) if isinstance(item, dict)]
+    prior_blockers = _merge_unique_text_lists(
+        continuation_summary.get("prior_blockers"),
+        continuation_detection.get("prior_blockers"),
+    )
+    prior_session = dict(continuation_summary)
+    prior_session["items"] = prior_items[:3]
+    prior_session["artifacts"] = _continuation_plan_artifacts(prior_context, continuation_summary)
+    prior_session["blockers"] = prior_blockers[:2]
+    prior_session["stage"] = "blocked" if prior_blockers else "in_progress"
+
+    continuation_context = dict(continuation_summary)
+    continuation_context["continuation_detection"] = continuation_detection
+    continuation_context["prior_blockers"] = prior_blockers[:3]
+    continuation_context["current_user_request"] = _compact_context_text(prompt, 160)
+    return prior_session, continuation_context
+
+
+def _should_generate_continuation_plan(
+    continuation_detection: Dict[str, Any],
+    prior_context: Dict[str, Any],
+) -> bool:
+    if generate_next_steps_plan is None:
+        return False
+    if not isinstance(continuation_detection, dict):
+        return False
+    if not bool(continuation_detection.get("is_continuation")):
+        return False
+    try:
+        confidence = float(continuation_detection.get("confidence", 0.0) or 0.0)
+    except Exception:
+        confidence = 0.0
+    if confidence < 0.80:
+        return False
+    try:
+        context_fact_count = int(prior_context.get("context_fact_count", 0) or 0)
+    except Exception:
+        context_fact_count = 0
+    return context_fact_count > 0
+
+
+def _safe_continuation_plan(plan: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(plan, dict):
+        return None
+    try:
+        return json.loads(json.dumps(plan, ensure_ascii=False))
+    except Exception:
+        return None
+
+
+def _generate_continuation_plan(
+    prompt: str,
+    prior_context: Dict[str, Any],
+    continuation_summary: Dict[str, Any],
+    continuation_detection: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if not _should_generate_continuation_plan(continuation_detection, prior_context):
+        return None
+
+    prior_session, planner_context = _build_continuation_plan_inputs(
+        prompt=prompt,
+        prior_context=prior_context,
+        continuation_summary=continuation_summary,
+        continuation_detection=continuation_detection,
+    )
+    try:
+        plan = generate_next_steps_plan(
+            prior_session=prior_session,
+            current_user_request=prompt,
+            continuation_context=planner_context,
+        )
+    except Exception:
+        return None
+    return _safe_continuation_plan(plan)
+
+
 def persist_cycle(
     wiki_root: str,
     prompt: str,
@@ -1168,6 +1847,54 @@ def prepare_dispatch_payload(prompt: str, user: str = "runtime-user", dispatch: 
             normalize_checkpoint_metadata = None
         if normalize_checkpoint_metadata:
             metadata = normalize_checkpoint_metadata(summary=prompt, metadata=metadata, event_flags=event_flags)
+        prior_context = _collect_prior_context_payload(
+            prompt=prompt,
+            metadata=metadata,
+            spawn_payload=spawn_payload,
+            subagent_name=subagent_name,
+            model_resolution=model_resolution,
+        )
+        metadata["context_retrieval_source"] = prior_context["context_retrieval_source"]
+        metadata["context_fact_count"] = prior_context["context_fact_count"]
+        continuation_summary = _build_continuation_detection_summary(
+            user=user,
+            metadata=metadata,
+            prior_context=prior_context,
+            dispatch=dispatch,
+            subagent_name=subagent_name,
+        )
+        continuation_detection = _empty_continuation_detection_result()
+        if detect_continuation is not None:
+            try:
+                detected = detect_continuation(prompt, continuation_summary)
+            except Exception:
+                detected = None
+            if isinstance(detected, dict):
+                continuation_detection.update(detected)
+        continuation_plan = _generate_continuation_plan(
+            prompt=prompt,
+            prior_context=prior_context,
+            continuation_summary=continuation_summary,
+            continuation_detection=continuation_detection,
+        )
+        if continuation_plan is not None:
+            metadata["continuation_plan"] = continuation_plan
+        continuation_detection["is_continuation"] = bool(continuation_detection.get("is_continuation"))
+        try:
+            continuation_detection["confidence"] = float(continuation_detection.get("confidence", 0.0) or 0.0)
+        except Exception:
+            continuation_detection["confidence"] = 0.0
+        for key in ("signals", "prior_blockers", "suggested_next_steps"):
+            value = continuation_detection.get(key)
+            if isinstance(value, list):
+                continue
+            if isinstance(value, tuple):
+                continuation_detection[key] = list(value)
+            else:
+                continuation_detection[key] = []
+        metadata["continuation_detection"] = continuation_detection
+        metadata["is_continuation"] = continuation_detection["is_continuation"]
+        metadata["continuation_type"] = continuation_detection.get("continuation_type", "none")
         persistence = handle_request(prompt=prompt, user=user, dispatch=dispatch,
                                      run_skill=run_skill, skill_script_name=skill_script_name,
                                      run_script_path=run_script_path,
@@ -1179,7 +1906,17 @@ def prepare_dispatch_payload(prompt: str, user: str = "runtime-user", dispatch: 
             "skills_manifest": "skills/skills_manifest.json",
             "event_flags": event_flags,
             "dispatch_metadata": metadata,
+            "context_retrieval_source": prior_context["context_retrieval_source"],
+            "context_fact_count": prior_context["context_fact_count"],
+            "prior_context": prior_context["markdown"],
+            "prior_context_items": prior_context["items"],
+            "continuation_detection": continuation_detection,
+            "is_continuation": continuation_detection["is_continuation"],
+            "continuation_type": continuation_detection.get("continuation_type", "none"),
         }
+
+        if continuation_plan is not None:
+            parent_context["continuation_plan"] = continuation_plan
 
         if subagent_name:
             parent_context["subagent"] = subagent_name

@@ -72,7 +72,7 @@ Logging guardrails:
 - Treat raw hook payloads, especially `PostToolUse`, as telemetry rather than curated knowledge.
 - Persist one concise checkpoint per completed user-visible cycle, not one entry per tool invocation.
 - Only allow six-file curated updates when structured metadata explicitly identifies the request, outcome, and next action.
-- When transcripts contain continuation prompts, preserve the latest substantive user request and attach compact `session_evidence` so the wiki log reflects the real multi-turn context instead of the first prompt alone.
+- When transcripts contain continuation prompts, only run the auto-plan step when continuation is detected, confidence >= 0.80, and prior context exists; preserve the latest substantive user request and attach compact `session_evidence` so the wiki log reflects the real multi-turn context instead of the first prompt alone.
 
 ### Cycle identity contract
 

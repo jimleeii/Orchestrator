@@ -61,27 +61,26 @@ class TestOrchestratorRuntime(unittest.TestCase):
                 pass
 
     def test_handle_request_runs_skill_script(self):
-        # create a temporary skill folder with a python script
-        skills_base = os.path.join(os.path.dirname(__file__), '..', 'skills')
-        skills_base = os.path.abspath(skills_base)
-        tmp_skill = os.path.join(skills_base, 'tmp_skill')
-        os.makedirs(tmp_skill, exist_ok=True)
-        script = os.path.join(tmp_skill, 'run_me.py')
-        try:
-            with open(script, 'w', encoding='utf8') as f:
-                f.write('print("SKILL_SCRIPT_RAN")\n')
-
-            # run handler
-            out = rt.handle_request('test', user='u', run_skill='tmp_skill')
-            self.assertIn('SKILL_SCRIPT_RAN', (out.get('skill_output') or ''))
-        finally:
+        mirror_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        with chdir(mirror_root):
+            skills_base = os.path.join(mirror_root, 'skills')
+            tmp_skill = os.path.join(skills_base, 'tmp_skill')
+            os.makedirs(tmp_skill, exist_ok=True)
+            script = os.path.join(tmp_skill, 'run_me.py')
             try:
-                if os.path.exists(script):
-                    os.remove(script)
-                if os.path.isdir(tmp_skill):
-                    os.rmdir(tmp_skill)
-            except Exception:
-                pass
+                with open(script, 'w', encoding='utf8') as f:
+                    f.write('print("SKILL_SCRIPT_RAN")\n')
+
+                out = rt.handle_request('test', user='u', run_skill='tmp_skill')
+                self.assertIn('SKILL_SCRIPT_RAN', (out.get('skill_output') or ''))
+            finally:
+                try:
+                    if os.path.exists(script):
+                        os.remove(script)
+                    if os.path.isdir(tmp_skill):
+                        os.rmdir(tmp_skill)
+                except Exception:
+                    pass
 
     def test_prepare_dispatch_payload(self):
         payload = rt.prepare_dispatch_payload('prepare-prompt', user='u')

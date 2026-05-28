@@ -33,6 +33,11 @@ from datetime import datetime, timezone, timedelta
 import re
 from typing import Optional, List, Dict, Any
 
+try:
+    from src.orchestrator_memory import persist_continuity_checkpoint_from_normalized_metadata as _persist_continuity_checkpoint_from_normalized_metadata
+except Exception:  # pragma: no cover - import/runtime guard
+    _persist_continuity_checkpoint_from_normalized_metadata = None
+
 TEMPLATES_DIR_NAME = ".wiki/orchestrator"
 DEFAULT_MODEL_ID = "gpt-5.4-mini"
 AUTOMATIC_HOOK_EVENT_NAMES = {
@@ -565,6 +570,25 @@ def _append_cycle_telemetry_event(
     line = _utf8_backslashreplace_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     with path.open('a', encoding='utf-8') as handle:
         handle.write(line + '\n')
+
+
+def _persist_continuity_checkpoint(
+    base_root: Path,
+    metadata: Dict[str, Any],
+    dispatch_path: str,
+    command: str,
+) -> None:
+    if _persist_continuity_checkpoint_from_normalized_metadata is None:
+        return
+    try:
+        _persist_continuity_checkpoint_from_normalized_metadata(
+            metadata,
+            root=base_root,
+            source_kind='log_cycle',
+            source_identifier=f'{dispatch_path}:{command}' if dispatch_path or command else '',
+        )
+    except Exception:
+        return
 
 
 def _load_dedupe_store(base_root: Path) -> Dict[str, str]:
@@ -1351,6 +1375,8 @@ def log_cycle(
             metadata=metadata,
             preview=preview,
         )
+        if not preview:
+            _persist_continuity_checkpoint(dedupe_root, metadata, dispatch_path, prompt_command)
         # After persisting telemetry and curated checkpoint, regenerate knowledge pages (non-blocking)
         _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {
@@ -1384,6 +1410,8 @@ def log_cycle(
             metadata=metadata,
             preview=preview,
         )
+        if not preview:
+            _persist_continuity_checkpoint(dedupe_root, metadata, dispatch_path, '/info')
         # Trigger background knowledge generation for workspace wiki
         _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {"level": "compact", "command": "/info", "returncode": str(proc.returncode)}
@@ -1415,6 +1443,8 @@ def log_cycle(
             metadata=metadata,
             preview=preview,
         )
+        if not preview:
+            _persist_continuity_checkpoint(dedupe_root, metadata, dispatch_path, '/full-log')
         # Trigger background knowledge generation for workspace wiki
         _run_synthesize_wiki(repo_root, Path(target_root) if target_root else None, preview)
         return {

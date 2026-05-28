@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,16 @@ def _telemetry_path(target_root: Path) -> Path:
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _read_checkpoint_rows(db_path: Path) -> list[dict[str, object]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM continuity_checkpoints ORDER BY created_at_utc ASC, id ASC"
+        ).fetchall()
+
+    return [{**dict(row), "checkpoint": json.loads(row["checkpoint_json"])} for row in rows]
 
 
 class CycleTelemetryTests(unittest.TestCase):
@@ -112,6 +123,78 @@ class CycleTelemetryTests(unittest.TestCase):
             self.assertEqual(entries[0]["level"], "full")
             self.assertEqual(entries[0]["command"], "/full-log")
             self.assertRegex(str(entries[0]["fingerprint"]), r"^sha1:[0-9a-f]{40}$")
+
+    def test_log_cycle_writes_continuity_checkpoint_entry(self) -> None:
+        completed = subprocess.CompletedProcess(args=["python"], returncode=0)
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_root:
+            target_root = Path(temp_root)
+            with mock.patch("hooks.log_hooks._run_log_command", return_value=completed):
+                result = log_cycle(
+                    dispatch_path="single-agent",
+                    event_flags={},
+                    summary="Persist continuity checkpoint after implementation pass",
+                    skills=["writing-plans"],
+                    metadata={
+                        "request_group_id": "grp-continuity-001",
+                        "session_id": "session-continuity-001",
+                        "cycle_id": "cycle-continuity-001",
+                        "project_request": "Implement the continuity store and hook integration",
+                        "request_title": "Implement the continuity store and hook integration",
+                        "normalized_request": "implement continuity store and hook integration",
+                        "change_applied": "Wired the phase 1 store into log_cycle.",
+                        "observed_result": "Continuity checkpoint persisted beside telemetry.",
+                        "decision": "keep",
+                        "next_action": "Add retrieval in the next phase.",
+                        "files_touched": ["src/orchestrator_memory.py", "hooks/log_hooks.py"],
+                    },
+                    target_root=target_root,
+                    preview=False,
+                )
+
+            continuity_db = target_root / ".wiki" / "orchestrator" / "project_memory.db"
+            self.assertEqual(result["command"], "/info")
+            self.assertTrue(continuity_db.exists())
+
+            rows = _read_checkpoint_rows(continuity_db)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["continuity_key"], "request_group:grp-continuity-001")
+            self.assertEqual(rows[0]["project_request"], "Implement the continuity store and hook integration")
+            self.assertEqual(rows[0]["checkpoint"]["files_touched"], ["src/orchestrator_memory.py", "hooks/log_hooks.py"])
+            self.assertEqual(rows[0]["checkpoint"]["observed_result"], "Continuity checkpoint persisted beside telemetry.")
+
+    def test_continuity_persistence_failure_does_not_break_log_cycle(self) -> None:
+        completed = subprocess.CompletedProcess(args=["python"], returncode=0)
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_root:
+            target_root = Path(temp_root)
+            with mock.patch("hooks.log_hooks._run_log_command", return_value=completed):
+                with mock.patch(
+                    "hooks.log_hooks._persist_continuity_checkpoint_from_normalized_metadata",
+                    side_effect=RuntimeError("boom"),
+                ):
+                    result = log_cycle(
+                        dispatch_path="single-agent",
+                        event_flags={},
+                        summary="Persist continuity checkpoint after implementation pass",
+                        skills=["writing-plans"],
+                        metadata={
+                            "request_group_id": "grp-continuity-002",
+                            "session_id": "session-continuity-002",
+                            "cycle_id": "cycle-continuity-002",
+                            "project_request": "Implement the continuity store and hook integration",
+                            "change_applied": "Wired the phase 1 store into log_cycle.",
+                            "observed_result": "Continuity checkpoint persisted beside telemetry.",
+                            "decision": "keep",
+                            "next_action": "Add retrieval in the next phase.",
+                        },
+                        target_root=target_root,
+                        preview=False,
+                    )
+
+            telemetry_path = target_root / ".wiki" / "orchestrator" / "telemetry" / "cycles.jsonl"
+            self.assertEqual(result["command"], "/info")
+            self.assertTrue(telemetry_path.exists())
 
     def test_log_cycle_skipped_noise_does_not_create_cycle_telemetry(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_root:
