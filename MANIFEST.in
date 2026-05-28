@@ -1,0 +1,15 @@
+include orchestrator.agent.md
+include orchestrator-tools.md
+include DISPATCH_AND_LOGGING_API.md
+include HEALTH_METADATA.md
+include OPERATIONAL_TRUTH.md
+include requirements.txt
+include log_cycle.json
+include rtk-rewrite.json
+include README.md
+
+recursive-include templates *
+recursive-include hooks *
+recursive-include skills *
+recursive-include scripts *.py
+recursive-include src *.py
