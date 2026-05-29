@@ -57,6 +57,10 @@ except Exception:
         generate_next_steps_plan = None  # type: ignore[assignment]
 from src.model_resolver import resolve_model_for_subagent
 try:
+    from src.model_discovery import load_model_catalog_bundle
+except Exception:
+    from model_discovery import load_model_catalog_bundle  # type: ignore
+try:
     from src.orchestrator_memory import derive_continuity_key, resolve_continuity_db_path
 except Exception:
     from orchestrator_memory import derive_continuity_key, resolve_continuity_db_path  # type: ignore
@@ -1539,6 +1543,7 @@ def main():
     parser.add_argument("--event-flags", help="Structured JSON event flags to influence logging decisions")
     parser.add_argument("--metadata", help="Structured JSON metadata to carry into wiki log entries")
     parser.add_argument("--discover-skills", action="store_true", help="Scan and write skills manifest")
+    parser.add_argument("--discover-models", action="store_true", help="Run model discovery and write skills/model_catalog.json")
     parser.add_argument("--manifest-path", default="skills/skills_manifest.json", help="Manifest output path")
     parser.add_argument("--run-script", help="Run a repository script (relative path)")
     parser.add_argument("--run-skill", help="Run an executable script inside a skill folder (skill name)")
@@ -1571,6 +1576,17 @@ def main():
         save_manifest(manifest, args.manifest_path)
         print(f"Saved skills manifest to {args.manifest_path} ({len(manifest)} skills)")
 
+    if getattr(args, "discover_models", False):
+        # Run the discovery script and write model catalog into skills/
+        try:
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            out_path = os.path.join(repo_root, "skills", "model_catalog.json")
+            script_path = os.path.join(repo_root, "scripts", "discover_models.py")
+            res = run_script(script_path, args=["--out", out_path])
+            print(res)
+        except Exception as e:
+            print(f"Model discovery failed: {e}")
+
     if args.run_script:
         script_output = run_script(args.run_script)
         print(script_output)
@@ -1593,7 +1609,7 @@ def main():
     )
 
 
-def init_orchestrator(skills_dir: Optional[str] = None, manifest_path: Optional[str] = None) -> dict:
+def init_orchestrator(skills_dir: Optional[str] = None, manifest_path: Optional[str] = None, discover_models: bool = False) -> dict:
     """Initialize orchestrator runtime by discovering skills and writing a manifest.
 
     By default this uses the package-relative `skills/` folder (adjacent to `src/`).
@@ -1614,6 +1630,17 @@ def init_orchestrator(skills_dir: Optional[str] = None, manifest_path: Optional[
     # Only persist when we found skills to avoid creating/truncating an empty manifest
     if manifest:
         save_manifest(manifest, manifest_path)
+    # Optionally run model discovery and persist a model_catalog.json next to skills
+    if discover_models:
+        try:
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            script_path = os.path.join(repo_root, "scripts", "discover_models.py")
+            out_path = os.path.join(repo_root, "skills", "model_catalog.json")
+            # use run_script helper so discovery runs in a subprocess and cannot break init
+            run_script(script_path, args=["--out", out_path])
+        except Exception:
+            # best-effort only
+            pass
     return manifest
 
 
@@ -1680,7 +1707,8 @@ try:
             default_skills_dir = os.path.join(repo_root, "skills")
             default_manifest_path = os.path.join(default_skills_dir, "skills_manifest.json")
             if os.path.isdir(default_skills_dir):
-                _MANIFEST = init_orchestrator(skills_dir=default_skills_dir, manifest_path=default_manifest_path)
+                discover_flag = os.environ.get("ORCHESTRATOR_DISCOVER_MODELS", "0") in ("1", "true", "True")
+                _MANIFEST = init_orchestrator(skills_dir=default_skills_dir, manifest_path=default_manifest_path, discover_models=discover_flag)
             else:
                 # No package-relative skills folder; avoid creating files in caller CWD
                 _MANIFEST = {}
@@ -1820,6 +1848,20 @@ def prepare_dispatch_payload(prompt: str, user: str = "runtime-user", dispatch: 
 
         if not subagent_name:
             subagent_name = _first_text(spawn_payload.get("name"), spawn_payload.get("subagent"), metadata.get("subagent"))
+
+        model_catalog_bundle = None
+        if model_catalog is None or global_default_model is None:
+            try:
+                model_catalog_bundle = load_model_catalog_bundle()
+            except Exception as exc:
+                logger.debug("Model catalog auto-discovery failed: %s", exc)
+                model_catalog_bundle = None
+
+        if model_catalog is None and model_catalog_bundle is not None:
+            model_catalog = model_catalog_bundle.catalog
+
+        if global_default_model is None and model_catalog_bundle is not None:
+            global_default_model = model_catalog_bundle.default_model
 
         if model_resolution is None and spawn_payload and model_catalog and global_default_model:
             # Pass contract_score so a low-scoring previous response escalates the tier

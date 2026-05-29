@@ -26,6 +26,7 @@ import json
 import hashlib
 import sys
 import subprocess
+from time import perf_counter
 from pathlib import Path
 from datetime import datetime, timezone
 import re
@@ -492,6 +493,42 @@ def _telemetry_cycle_path(base_root: Path) -> Path:
     return _resolve_wiki_root(base_root) / 'telemetry' / TELEMETRY_CYCLE_FILENAME
 
 
+def _coerce_non_negative_int(value: Any, default: int = 0) -> int:
+    try:
+        parsed = int(float(str(value).strip()))
+    except Exception:
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def _build_cycle_telemetry_metadata(
+    summary: str,
+    body: str,
+    skills: List[str],
+    metadata: Dict[str, Any],
+    transcript: Optional[str],
+    started_at: float,
+) -> Dict[str, Any]:
+    telemetry_metadata = dict(metadata)
+    telemetry_metadata.setdefault(
+        'selected_model',
+        _first_meaningful_text(metadata.get('selected_model'), metadata.get('cycle_selected_model'), metadata.get('model')),
+    )
+    telemetry_metadata.setdefault('selected_model_source', _first_meaningful_text(metadata.get('selected_model_source')))
+    telemetry_metadata.setdefault(
+        'model_resolution',
+        metadata.get('model_resolution') if isinstance(metadata.get('model_resolution'), dict) else None,
+    )
+    telemetry_metadata['summary_chars'] = len(_normalize_inline_text(summary))
+    telemetry_metadata['body_chars'] = len(body)
+    telemetry_metadata['transcript_chars'] = len(transcript or '')
+    telemetry_metadata['skills_count'] = len(skills)
+    telemetry_metadata['files_touched_count'] = len(_collect_files_touched(metadata))
+    telemetry_metadata['elapsed_ms'] = max(0, int((perf_counter() - started_at) * 1000))
+    telemetry_metadata['failure_detected'] = bool(metadata.get('failure_detected') or metadata.get('health_failure_kind'))
+    return telemetry_metadata
+
+
 def _build_cycle_telemetry_fingerprint(payload: Dict[str, Any]) -> str:
     fingerprint_payload = {
         'dispatch_path': _first_text(payload.get('dispatch_path')),
@@ -535,6 +572,17 @@ def _append_cycle_telemetry_event(
         'curated_checkpoint': bool(metadata.get('curated_checkpoint')),
         'summary': _normalize_inline_text(summary),
         'skills_used': list(skills),
+        'selected_model': _first_meaningful_text(metadata.get('selected_model'), metadata.get('cycle_selected_model'), metadata.get('model')),
+        'selected_model_source': _first_meaningful_text(metadata.get('selected_model_source')),
+        'contract_score': metadata.get('contract_score'),
+        'elapsed_ms': _coerce_non_negative_int(metadata.get('elapsed_ms')),
+        'summary_chars': _coerce_non_negative_int(metadata.get('summary_chars')),
+        'body_chars': _coerce_non_negative_int(metadata.get('body_chars')),
+        'transcript_chars': _coerce_non_negative_int(metadata.get('transcript_chars')),
+        'skills_count': _coerce_non_negative_int(metadata.get('skills_count')),
+        'files_touched_count': _coerce_non_negative_int(metadata.get('files_touched_count')),
+        'failure_detected': bool(metadata.get('failure_detected')),
+        'model_resolution': metadata.get('model_resolution') if isinstance(metadata.get('model_resolution'), dict) else None,
     }
     payload['fingerprint'] = _build_cycle_telemetry_fingerprint(payload)
 
@@ -1114,6 +1162,7 @@ def log_cycle(
     config = {"force_persist_all": bool(force_persist_all)}
     level = choose_logging_level(dispatch_path, event_flags or {}, config)
     repo_root = Path(root) if root else find_repo_root(None)
+    started_at = perf_counter()
     metadata = normalize_checkpoint_metadata(
         summary=summary,
         metadata=metadata or {},
@@ -1181,6 +1230,7 @@ def log_cycle(
             transcript_path = write_transcript(Path(target_root) if target_root else repo_root, transcript)
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        telemetry_metadata = _build_cycle_telemetry_metadata(summary, body, effective_skills, metadata, transcript, started_at)
         _append_cycle_telemetry_event(
             base_root=dedupe_root,
             dispatch_path=dispatch_path,
@@ -1188,7 +1238,7 @@ def log_cycle(
             command=prompt_command,
             summary=summary,
             skills=effective_skills,
-            metadata=metadata,
+            metadata=telemetry_metadata,
             preview=preview,
         )
         if not preview:
@@ -1216,6 +1266,7 @@ def log_cycle(
         )
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        telemetry_metadata = _build_cycle_telemetry_metadata(summary, body, effective_skills, metadata, transcript, started_at)
         _append_cycle_telemetry_event(
             base_root=dedupe_root,
             dispatch_path=dispatch_path,
@@ -1223,7 +1274,7 @@ def log_cycle(
             command='/info',
             summary=summary,
             skills=effective_skills,
-            metadata=metadata,
+            metadata=telemetry_metadata,
             preview=preview,
         )
         if not preview:
@@ -1249,6 +1300,7 @@ def log_cycle(
             transcript_path = write_transcript(Path(target_root) if target_root else repo_root, transcript)
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
+        telemetry_metadata = _build_cycle_telemetry_metadata(summary, body, effective_skills, metadata, transcript, started_at)
         _append_cycle_telemetry_event(
             base_root=dedupe_root,
             dispatch_path=dispatch_path,
@@ -1256,7 +1308,7 @@ def log_cycle(
             command='/full-log',
             summary=summary,
             skills=effective_skills,
-            metadata=metadata,
+            metadata=telemetry_metadata,
             preview=preview,
         )
         if not preview:

@@ -57,6 +57,10 @@ except Exception:
         generate_next_steps_plan = None  # type: ignore[assignment]
 from src.model_resolver import resolve_model_for_subagent
 try:
+    from src.model_discovery import load_model_catalog_bundle
+except Exception:
+    from model_discovery import load_model_catalog_bundle  # type: ignore
+try:
     from src.orchestrator_memory import derive_continuity_key, resolve_continuity_db_path
 except Exception:
     from orchestrator_memory import derive_continuity_key, resolve_continuity_db_path  # type: ignore
@@ -1820,6 +1824,20 @@ def prepare_dispatch_payload(prompt: str, user: str = "runtime-user", dispatch: 
 
         if not subagent_name:
             subagent_name = _first_text(spawn_payload.get("name"), spawn_payload.get("subagent"), metadata.get("subagent"))
+
+        model_catalog_bundle = None
+        if model_catalog is None or global_default_model is None:
+            try:
+                model_catalog_bundle = load_model_catalog_bundle()
+            except Exception as exc:
+                logger.debug("Model catalog auto-discovery failed: %s", exc)
+                model_catalog_bundle = None
+
+        if model_catalog is None and model_catalog_bundle is not None:
+            model_catalog = model_catalog_bundle.catalog
+
+        if global_default_model is None and model_catalog_bundle is not None:
+            global_default_model = model_catalog_bundle.default_model
 
         if model_resolution is None and spawn_payload and model_catalog and global_default_model:
             # Pass contract_score so a low-scoring previous response escalates the tier

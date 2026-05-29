@@ -3,10 +3,10 @@
 Precedence (highest -> lowest):
  1. subagent_assigned_model (spawn payload `model`)
  2. explicit context override (`preferred_model` / `model_hint`)
- 3. context best-fit model (subagent/task-aware tier selection)
- 4. parent_selected_model (parentContext.selected_model)
- 5. cycle_selected_model (parentContext.cycle_selected_model)
- 6. global_default_model
+ 3. parent_selected_model (parentContext.selected_model)
+ 4. cycle_selected_model (parentContext.cycle_selected_model)
+ 5. global_default_model
+ 6. context_best_fit_model (subagent/task-aware tier selection)
 
 The resolver returns a dict with keys: model, source, fallback_used (bool), fallback_reason (optional).
 """
@@ -40,6 +40,64 @@ def _normalize_tier(value: Any) -> Optional[str]:
         return "balanced"
     if tier in {"low", "cheap", "cheapest"}:
         return "economy"
+    return None
+
+
+def _normalize_model_id(value: Any) -> str:
+    """Normalize a model display name to a canonical id used in catalogs.
+
+    Examples: 'GPT-5.4 mini' -> 'gpt-5.4-mini'
+    """
+    if value is None:
+        return ""
+    s = str(value).strip().lower()
+    # swap spaces to dashes, collapse duplicate dashes
+    s = s.replace(" ", "-")
+    while "--" in s:
+        s = s.replace("--", "-")
+    return s
+
+
+def _resolve_catalog_model_id(candidate: Any, model_catalog: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """Resolve candidate model text to canonical catalog model id.
+
+    Matching order:
+      1) exact id match
+      2) case-insensitive id match
+      3) display name (`model_catalog[model_id]["name"]`) case-insensitive match
+      4) slug-ish comparison (spaces/hyphens normalized)
+    """
+    raw = str(candidate).strip() if candidate is not None else ""
+    if not raw:
+        return None
+
+    # 1) exact id match
+    if raw in model_catalog:
+        return raw
+
+    raw_lower = raw.lower()
+
+    # 2) case-insensitive id match
+    for model_id in model_catalog:
+        if model_id.lower() == raw_lower:
+            return model_id
+
+    # 3) display name case-insensitive match
+    for model_id, model_data in model_catalog.items():
+        display_name = str(model_data.get("name", "")).strip()
+        if display_name and display_name.lower() == raw_lower:
+            return model_id
+
+    raw_slug = _normalize_model_id(raw)
+
+    # 4) slug-ish comparison against ids and display names
+    for model_id, model_data in model_catalog.items():
+        if _normalize_model_id(model_id) == raw_slug:
+            return model_id
+        display_name = model_data.get("name")
+        if display_name and _normalize_model_id(display_name) == raw_slug:
+            return model_id
+
     return None
 
 
@@ -142,6 +200,14 @@ def resolve_model_for_subagent(spawn_payload: Dict[str, Any], parent_context: Di
     minimum_tier: optional enforced minimum tier string.
     contract_score: optional 0-100 score from score.py; if below 70 the minimum
         tier is escalated to 'frontier' to improve response quality on retry.
+
+        Precedence (highest -> lowest):
+            1) subagent_assigned_model
+            2) preferred_model/model_hint override
+            3) parent_selected_model
+            4) cycle_selected_model
+            5) global_default_model
+            6) context_best_fit_model
     """
 
     result = {
@@ -165,42 +231,51 @@ def resolve_model_for_subagent(spawn_payload: Dict[str, Any], parent_context: Di
             "minimum_tier escalated to frontier"
         )
 
-    requested = spawn_payload.get("model")
+    requested_raw = spawn_payload.get("model")
 
-    # 1. Try explicit spawn payload model
-    if requested:
-        if is_allowed_model(requested, model_catalog, minimum_tier):
-            result.update({"model": requested, "source": "subagent_assigned_model"})
-            return result
+    # 1. Try explicit spawn payload model (resolve aliases/names to catalog ids first)
+    if requested_raw:
+        requested = _resolve_catalog_model_id(requested_raw, model_catalog) or _normalize_model_id(requested_raw)
+        # If the requested model exists in the catalog, enforce minimum_tier
+        if requested in model_catalog:
+            if is_allowed_model(requested, model_catalog, minimum_tier):
+                result.update({"model": requested, "source": "subagent_assigned_model"})
+                return result
+            else:
+                # requested model present but not allowed — record fallback and continue
+                result["fallback_used"] = True
+                result["fallback_reason"] = f"requested model '{requested}' unavailable or below minimum_tier"
         else:
-            # requested model not allowed — record fallback and continue
+            # Unknown model id after normalization — record fallback and continue.
             result["fallback_used"] = True
             result["fallback_reason"] = f"requested model '{requested}' unavailable or below minimum_tier"
 
     # 2. Explicit context override
-    preferred_model = _first_text(
+    preferred_model_raw = _first_text(
         spawn_payload.get("preferred_model"),
         spawn_payload.get("model_hint"),
         parent_context.get("preferred_model"),
         parent_context.get("model_hint"),
     )
+    preferred_model = _resolve_catalog_model_id(preferred_model_raw, model_catalog) if preferred_model_raw else None
     if preferred_model and is_allowed_model(preferred_model, model_catalog, minimum_tier):
         result.update({"model": preferred_model, "source": "preferred_model"})
         return result
 
     # 3. Parent selected model (inherits from parent context)
-    parent_selected = parent_context.get("selected_model")
+    parent_selected = _resolve_catalog_model_id(parent_context.get("selected_model"), model_catalog)
     if parent_selected and is_allowed_model(parent_selected, model_catalog, minimum_tier):
         result.update({"model": parent_selected, "source": "parent_selected_model"})
         return result
 
     # 4. Cycle selected model (per-cycle override)
-    cycle_model = parent_context.get("cycle_selected_model")
+    cycle_model = _resolve_catalog_model_id(parent_context.get("cycle_selected_model"), model_catalog)
     if cycle_model and is_allowed_model(cycle_model, model_catalog, minimum_tier):
         result.update({"model": cycle_model, "source": "cycle_selected_model"})
         return result
 
     # 5. Global default
+    global_default_model = _resolve_catalog_model_id(global_default_model, model_catalog) or global_default_model
     if global_default_model and is_allowed_model(global_default_model, model_catalog, minimum_tier):
         result.update({"model": global_default_model, "source": "global_default_model"})
         return result

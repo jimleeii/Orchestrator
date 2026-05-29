@@ -10,6 +10,7 @@ class TestModelResolver(unittest.TestCase):
         self.catalog = {
             "gpt-5-mini": {"tier": "balanced"},
             "gpt-5.3-codex": {"tier": "frontier"},
+            "gpt-5.4-mini": {"tier": "balanced", "name": "GPT-5.4 mini"},
             "claude-sonnet": {"tier": "frontier"},
             "economy-1": {"tier": "economy"},
         }
@@ -22,6 +23,20 @@ class TestModelResolver(unittest.TestCase):
         self.assertEqual(r["model"], "gpt-5.3-codex")
         self.assertEqual(r["source"], "subagent_assigned_model")
 
+    def test_spawn_model_display_name_alias_is_normalized(self):
+        payload = {"model": "GPT-5.4 mini"}
+        parent = {}
+        r = resolve_model_for_subagent(payload, parent, self.catalog, self.global_default)
+        self.assertEqual(r["model"], "gpt-5.4-mini")
+        self.assertEqual(r["source"], "subagent_assigned_model")
+
+    def test_preferred_model_display_name_alias_is_normalized(self):
+        payload = {"preferred_model": "GPT-5.4 mini"}
+        parent = {}
+        r = resolve_model_for_subagent(payload, parent, self.catalog, self.global_default)
+        self.assertEqual(r["model"], "gpt-5.4-mini")
+        self.assertEqual(r["source"], "preferred_model")
+
     def test_spawn_model_blocked_falls_to_parent(self):
         payload = {"model": "economy-1"}
         parent = {"selected_model": "gpt-5.3-codex"}
@@ -30,6 +45,29 @@ class TestModelResolver(unittest.TestCase):
         self.assertEqual(r["model"], "gpt-5.3-codex")
         self.assertEqual(r["source"], "parent_selected_model")
         self.assertTrue(r["fallback_used"])
+        self.assertIn("requested model 'economy-1'", r["fallback_reason"])
+
+    def test_unknown_spawn_model_falls_to_parent(self):
+        payload = {"model": "NotARealModelName"}
+        parent = {"selected_model": "gpt-5.3-codex"}
+        r = resolve_model_for_subagent(payload, parent, self.catalog, self.global_default)
+        self.assertEqual(r["model"], "gpt-5.3-codex")
+        self.assertEqual(r["source"], "parent_selected_model")
+        self.assertTrue(r["fallback_used"])
+        self.assertIn("requested model", r["fallback_reason"])
+
+    def test_precedence_spawn_over_preferred_parent_cycle_global(self):
+        payload = {
+            "model": "gpt-5.3-codex",
+            "preferred_model": "gpt-5-mini",
+        }
+        parent = {
+            "selected_model": "claude-sonnet",
+            "cycle_selected_model": "gpt-5-mini",
+        }
+        r = resolve_model_for_subagent(payload, parent, self.catalog, self.global_default)
+        self.assertEqual(r["model"], "gpt-5.3-codex")
+        self.assertEqual(r["source"], "subagent_assigned_model")
 
     def test_no_spawn_inherits_parent(self):
         payload = {}

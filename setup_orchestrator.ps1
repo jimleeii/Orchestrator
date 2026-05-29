@@ -392,7 +392,7 @@ try {
             else {
                 Push-Location $RepoRoot
                 try {
-                    $args = @('--prompt', 'orchestrator smoke test', '--user', 'setup', '--run-skill', 'contract-validator')
+                    $args = @('--prompt', 'orchestrator smoke test', '--user', 'setup')
                     Write-Info "Invoking: $runner $handleScript $($args -join ' ')"
                     & $runner $handleScript @args
                 } finally { Pop-Location }

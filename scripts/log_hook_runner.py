@@ -224,6 +224,27 @@ def main() -> int:
         metadata = _load_json_object(args.metadata, "--metadata")
         spawn_payload = _load_json_object(args.spawn_payload, "--spawn-payload")
         model_catalog = _load_json_object(args.model_catalog, "--model-catalog")
+        # If no catalog supplied, attempt to load a persisted discovery result
+        if not model_catalog:
+            try:
+                default_catalog = workspace_root / "skills" / "model_catalog.json"
+                if default_catalog.exists():
+                    model_catalog = json.loads(default_catalog.read_text(encoding="utf-8"))
+                    print(f"Loaded model_catalog from {default_catalog}", file=sys.stderr)
+                else:
+                    try:
+                        from src.model_discovery import load_model_catalog_bundle
+                    except Exception:
+                        from model_discovery import load_model_catalog_bundle  # type: ignore
+
+                    bundle = load_model_catalog_bundle(repo_root=workspace_root)
+                    model_catalog = bundle.catalog
+                    if not args.global_default_model and bundle.default_model:
+                        args.global_default_model = bundle.default_model
+                    print("Loaded model_catalog from live discovery", file=sys.stderr)
+            except Exception:
+                # best-effort only
+                model_catalog = {}
     except ValueError as e:  # pragma: no cover - user input parsing
         print(e, file=sys.stderr)
         return 6
