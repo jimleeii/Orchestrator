@@ -36,6 +36,25 @@ class PromptMappingTests(unittest.TestCase):
         self.assertEqual(spec.category, 'workflow')
         self.assertIn('audits/orchestrator-wiki-audit-<YYYY-MM-DD>.md', spec.targets)
 
+    def test_refresh_model_catalog_command_is_explicitly_registered(self) -> None:
+        spec = prompt_registry.get_command_spec('/refresh-model-catalog')
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.prompt_file, 'refresh-model-catalog.prompt.md')
+        self.assertFalse(spec.supports_log_append)
+        self.assertEqual(spec.category, 'workflow')
+        self.assertIn('skills/model_catalog.json', spec.targets)
+        self.assertIn('.github/agents/Orchestrator/skills/model_catalog.json', spec.targets)
+
+    def test_refresh_model_alias_is_explicitly_registered(self) -> None:
+        spec = prompt_registry.get_command_spec('/refresh-model')
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec.prompt_file, 'refresh-model.prompt.md')
+        self.assertFalse(spec.supports_log_append)
+        self.assertEqual(spec.category, 'workflow')
+        self.assertEqual(spec.alias_for, '/refresh-model-catalog')
+        self.assertIn('skills/model_catalog.json', spec.targets)
+        self.assertIn('.github/agents/Orchestrator/skills/model_catalog.json', spec.targets)
+
     def test_registry_covers_current_prompt_inventory(self) -> None:
         prompt_files = set(prompt_registry.discover_prompt_files(REPO_ROOT))
         mapped = {spec.prompt_file for spec in prompt_registry.PROMPT_COMMANDS.values() if spec.prompt_file}

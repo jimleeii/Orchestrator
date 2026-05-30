@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
 import importlib.util
 import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +33,7 @@ def _load_module(module_name: str, relative_path: Path):
 
 
 os.environ.setdefault("ORCHESTRATOR_SKIP_AUTOINIT", "1")
+log_hook_runner = _load_module("orchestrator_log_hook_runner_model_discovery_test", Path("scripts") / "log_hook_runner.py")
 orchestrator_runtime = _load_module("orchestrator_runtime_model_discovery_test", Path("src") / "orchestrator_runtime.py")
 
 
@@ -198,6 +201,52 @@ model: AI model to use for Copilot CLI
         self.assertEqual(payload["parent_context"]["selected_model"], "gpt-5.4-mini")
         self.assertEqual(payload["parent_context"]["cycle_selected_model"], "gpt-5.4-mini")
         self.assertEqual(payload["parent_context"]["model_resolution"], {"model": "gpt-5.4-mini", "source": "copilot-cli"})
+
+    def test_log_hook_runner_live_discovery_populates_catalog_without_stderr_noise(self) -> None:
+        fake_bundle = SimpleNamespace(
+            catalog={
+                "gpt-5.4-mini": {
+                    "tier": "balanced",
+                    "quality_score": 75,
+                    "latency_score": 75,
+                    "cost_score": 60,
+                    "quality_score_source": "tier-prior",
+                    "latency_score_source": "tier-prior",
+                    "cost_score_source": "tier-prior",
+                    "context_window": None,
+                    "tool_calling": True,
+                    "telemetry_partial": True,
+                    "sources": ["copilot-cli"],
+                }
+            },
+            default_model="gpt-5.4-mini",
+            sources={"copilot": {"selected_model": "gpt-5.4-mini"}},
+        )
+
+        with (
+            patch.object(model_discovery, "load_model_catalog_bundle", return_value=fake_bundle) as load_mock,
+            patch("hooks.log_hooks.log_cycle", return_value={"logging_level": "compact", "skill_usage": {}}),
+            patch("hooks.log_hooks.normalize_checkpoint_metadata", side_effect=lambda **kwargs: kwargs["metadata"]),
+            patch("src.model_resolver.resolve_model_for_subagent", return_value={"model": "gpt-5.4-mini", "source": "copilot-cli"}) as resolve_mock,
+            patch.object(sys, "argv", [
+                "log_hook_runner.py",
+                "--root",
+                str(ORCHESTRATOR_ROOT),
+                "--subagent-name",
+                "Senior Developer",
+                "--spawn-payload",
+                json.dumps({"name": "Senior Developer"}),
+            ]),
+        ):
+            stderr = io.StringIO()
+            stdout = io.StringIO()
+            with redirect_stderr(stderr), redirect_stdout(stdout):
+                result = log_hook_runner.main()
+
+        self.assertEqual(result, 0)
+        self.assertNotIn("Loaded model_catalog from live discovery", stderr.getvalue())
+        load_mock.assert_called_once_with(repo_root=ORCHESTRATOR_ROOT)
+        self.assertEqual(resolve_mock.call_args.kwargs["model_catalog"], fake_bundle.catalog)
 
 
 if __name__ == "__main__":

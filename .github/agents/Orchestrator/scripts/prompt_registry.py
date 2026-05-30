@@ -156,6 +156,31 @@ PROMPT_COMMANDS: dict[str, PromptCommandSpec] = {
         category='workflow',
         notes='Prompt-backed maintenance workflow; not handled by the append-only log writer.',
     ),
+    '/refresh-model-catalog': PromptCommandSpec(
+        command='/refresh-model-catalog',
+        description='Regenerate the model catalog cache on demand.',
+        prompt_file='refresh-model-catalog.prompt.md',
+        targets=(
+            'skills/model_catalog.json',
+            '.github/agents/Orchestrator/skills/model_catalog.json',
+        ),
+        supports_log_append=False,
+        category='workflow',
+        notes='Prompt-backed cache refresh workflow; not handled by the append-only log writer.',
+    ),
+    '/refresh-model': PromptCommandSpec(
+        command='/refresh-model',
+        description='Shorter alias for `/refresh-model-catalog` — regenerate the model catalog cache on demand.',
+        prompt_file='refresh-model.prompt.md',
+        targets=(
+            'skills/model_catalog.json',
+            '.github/agents/Orchestrator/skills/model_catalog.json',
+        ),
+        supports_log_append=False,
+        category='workflow',
+        alias_for='/refresh-model-catalog',
+        notes='Prompt-backed shorthand kept for slash-command ergonomics.',
+    ),
     '/all-log': PromptCommandSpec(
         command='/all-log',
         description='Internal alias for `/full-log` used by runtime helpers.',

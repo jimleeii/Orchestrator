@@ -1,0 +1,3 @@
+[console_scripts]
+orchestrator-handle-request = scripts.handle_request:main
+orchestrator-package = package_orchestrator:main
