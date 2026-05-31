@@ -1,36 +1,118 @@
 {
   "claude-haiku-4.5": {
     "tier": "balanced",
-    "quality_score": 75,
-    "latency_score": 75,
-    "cost_score": 60,
+    "quality_score": 60,
+    "latency_score": 85,
+    "cost_score": 85,
     "quality_score_source": "tier-prior",
     "latency_score_source": "tier-prior",
     "cost_score_source": "tier-prior",
-    "context_window": null,
+    "context_window": 127805,
     "tool_calling": true,
     "telemetry_partial": true,
     "sources": [
-      "copilot-session-state"
+      "copilot-session-state",
+      "copilot-picker"
     ],
-    "observed_in_copilot_chat": true
+    "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "Claude Haiku 4.5"
+  },
+  "claude-opus-4.5": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "Claude Opus 4.5"
+  },
+  "claude-opus-4.6": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 168000,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "Claude Opus 4.6"
+  },
+  "claude-sonnet-4": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "Claude Sonnet 4"
+  },
+  "claude-sonnet-4.5": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "Claude Sonnet 4.5"
   },
   "claude-sonnet-4.6": {
     "tier": "frontier",
-    "quality_score": 90,
+    "quality_score": 75,
     "latency_score": 50,
     "cost_score": 50,
     "quality_score_source": "tier-prior",
     "latency_score_source": "orchestrator-telemetry",
     "cost_score_source": "orchestrator-telemetry",
-    "context_window": null,
+    "context_window": 168000,
     "tool_calling": true,
     "telemetry_partial": true,
     "sources": [
       "copilot-session-state",
+      "copilot-picker",
       "orchestrator-telemetry"
     ],
     "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "Claude Sonnet 4.6",
     "quality_sample_count": 0,
     "latency_sample_count": 2,
     "cost_sample_count": 2,
@@ -40,7 +122,7 @@
     "tool_call_success_rate": 1.0,
     "tool_call_reliability": "pass"
   },
-  "gpt-4.1": {
+  "gemini-2.5-pro": {
     "tier": "balanced",
     "quality_score": 75,
     "latency_score": 75,
@@ -48,13 +130,92 @@
     "quality_score_source": "tier-prior",
     "latency_score_source": "tier-prior",
     "cost_score_source": "tier-prior",
-    "context_window": null,
+    "context_window": 108609,
     "tool_calling": true,
     "telemetry_partial": true,
     "sources": [
-      "copilot-session-state"
+      "copilot-session-state",
+      "copilot-picker"
     ],
-    "observed_in_copilot_chat": true
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "Gemini 2.5 Pro"
+  },
+  "gemini-3-flash-preview": {
+    "tier": "balanced",
+    "quality_score": 60,
+    "latency_score": 85,
+    "cost_score": 85,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 108594,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "Gemini 3 Flash (Preview)"
+  },
+  "gemini-3-pro-preview": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 108609,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "Gemini 3 Pro (Preview)"
+  },
+  "gemini-3.1-pro-preview": {
+    "tier": "balanced",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 135790,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "Gemini 3.1 Pro (Preview)"
+  },
+  "gpt-4.1": {
+    "tier": "balanced",
+    "quality_score": 60,
+    "latency_score": 85,
+    "cost_score": 85,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 111424,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "GPT-4.1"
   },
   "gpt-4o": {
     "tier": "balanced",
@@ -64,12 +225,280 @@
     "quality_score_source": "tier-prior",
     "latency_score_source": "tier-prior",
     "cost_score_source": "tier-prior",
-    "context_window": null,
+    "context_window": 63805,
     "tool_calling": true,
     "telemetry_partial": true,
     "sources": [
-      "copilot-session-state"
+      "copilot-session-state",
+      "copilot-picker"
     ],
-    "observed_in_copilot_chat": true
+    "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "GPT-4o"
+  },
+  "gpt-5": {
+    "tier": "balanced",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "GPT-5"
+  },
+  "gpt-5-codex": {
+    "tier": "balanced",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "GPT-5-Codex (Preview)"
+  },
+  "gpt-5-mini": {
+    "tier": "balanced",
+    "quality_score": 60,
+    "latency_score": 85,
+    "cost_score": 85,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "GPT-5 mini"
+  },
+  "gpt-5.1": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "GPT-5.1"
+  },
+  "gpt-5.1-codex": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "GPT-5.1-Codex"
+  },
+  "gpt-5.1-codex-max": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "GPT-5.1-Codex-Max"
+  },
+  "gpt-5.1-codex-mini": {
+    "tier": "frontier",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "GPT-5.1-Codex-Mini (Preview)"
+  },
+  "gpt-5.2": {
+    "tier": "frontier",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 127805,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "GPT-5.2"
+  },
+  "gpt-5.2-codex": {
+    "tier": "frontier",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 272000,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "vision": true,
+    "picker_name": "GPT-5.2-Codex"
+  },
+  "gpt-5.3-codex": {
+    "tier": "frontier",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 272000,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "GPT-5.3-Codex"
+  },
+  "gpt-5.4": {
+    "tier": "frontier",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 272000,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "GPT-5.4"
+  },
+  "gpt-5.4-mini": {
+    "tier": "frontier",
+    "quality_score": 60,
+    "latency_score": 85,
+    "cost_score": 85,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 272000,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "GPT-5.4 mini"
+  },
+  "gpt-5.5": {
+    "tier": "balanced",
+    "quality_score": 90,
+    "latency_score": 65,
+    "cost_score": 35,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 272000,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": true,
+    "vision": true,
+    "picker_name": "GPT-5.5"
+  },
+  "grok-code-fast-1": {
+    "tier": "balanced",
+    "quality_score": 75,
+    "latency_score": 75,
+    "cost_score": 60,
+    "quality_score_source": "tier-prior",
+    "latency_score_source": "tier-prior",
+    "cost_score_source": "tier-prior",
+    "context_window": 108609,
+    "tool_calling": true,
+    "telemetry_partial": true,
+    "sources": [
+      "copilot-session-state",
+      "copilot-picker"
+    ],
+    "observed_in_copilot_chat": false,
+    "picker_name": "Grok Code Fast 1"
   }
 }

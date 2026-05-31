@@ -430,6 +430,164 @@ def _discover_copilot_session_models(copilot_root: Optional[Path | str] = None) 
     return sorted(observed), source_summary
 
 
+def _find_vscode_state_db() -> Optional[Path]:
+    """Locate VS Code's global state database across common OS paths."""
+    appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    candidates: List[Path] = [
+        appdata / "Code" / "User" / "globalStorage" / "state.vscdb",
+        Path.home() / ".config" / "Code" / "User" / "globalStorage" / "state.vscdb",
+        Path.home() / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "state.vscdb",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _read_vscode_state_keys(keys: List[str], db_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Read specific keys from VS Code's ``state.vscdb`` and return parsed JSON values.
+
+    Opens the database in read-only mode and returns an empty dict on any error
+    so callers never need to guard against database-access failures.
+    """
+    try:
+        import sqlite3 as _sqlite3
+    except ImportError:
+        return {}
+
+    path = db_path or _find_vscode_state_db()
+    if path is None:
+        return {}
+
+    results: Dict[str, Any] = {}
+    try:
+        conn = _sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3.0)
+        try:
+            cur = conn.cursor()
+            placeholders = ",".join("?" for _ in keys)
+            cur.execute(f"SELECT key, value FROM ItemTable WHERE key IN ({placeholders})", keys)
+            for key, raw_value in cur.fetchall():
+                if raw_value:
+                    try:
+                        results[key] = json.loads(raw_value)
+                    except Exception:
+                        pass
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    return results
+
+
+def _tier_from_multiplier(multiplier: Optional[float]) -> Optional[str]:
+    """Map a Copilot pricing multiplier to a tier string."""
+    if multiplier is None:
+        return None
+    if multiplier < 0.5:
+        return "economy"
+    if multiplier <= 1.0:
+        return "balanced"
+    return "frontier"
+
+
+_COPILOT_PICKER_VENDORS: frozenset[str] = frozenset({"copilot", "copilotcli"})
+
+
+def _discover_copilot_picker_models(
+    db_path: Optional[Path] = None,
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    """Discover Copilot models from VS Code's state.vscdb (the model-picker source).
+
+    Reads ``chat.cachedLanguageModels``, ``chat.cachedLanguageModels.v2``,
+    ``chatModelPinned``, and ``chatModelRecentlyUsed`` from the VS Code global
+    state database and returns a model catalog tagged with the ``copilot-picker``
+    source.  Only user-selectable, Copilot-vendor models are included so that
+    BYOK/local models (openrouter, ollama, etc.) stay out of the Orchestrator catalog.
+    """
+    _KEYS = [
+        "chat.cachedLanguageModels",
+        "chat.cachedLanguageModels.v2",
+        "chatModelPinned",
+        "chatModelRecentlyUsed",
+    ]
+    state = _read_vscode_state_keys(_KEYS, db_path)
+    if not state:
+        return {}, {"error": "state.vscdb not found or unreadable"}
+
+    # Build a set of "bare" model IDs that the user has pinned or recently used.
+    interacted: set[str] = set()
+    for raw in (state.get("chatModelPinned") or []) + (state.get("chatModelRecentlyUsed") or []):
+        if "/" in raw:
+            _, bare = raw.split("/", 1)
+            interacted.add(_normalize_model_id(bare))
+
+    catalog: Dict[str, Dict[str, Any]] = {}
+
+    # Aggregate both cached model list versions.
+    all_items: List[Any] = []
+    for key in ("chat.cachedLanguageModels", "chat.cachedLanguageModels.v2"):
+        entries = state.get(key)
+        if isinstance(entries, list):
+            all_items.extend(entries)
+
+    for item in all_items:
+        if not isinstance(item, dict):
+            continue
+        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+
+        # Skip non-user-selectable entries (not shown in the picker).
+        if meta.get("isUserSelectable") is False:
+            continue
+
+        vendor = _coerce_text(meta.get("vendor"))
+        if vendor not in _COPILOT_PICKER_VENDORS:
+            continue
+
+        model_id = _normalize_model_id(meta.get("id") or "")
+        if not model_id or model_id == "auto":
+            continue
+
+        multiplier: Optional[float] = None
+        raw_multiplier = meta.get("multiplierNumeric")
+        if isinstance(raw_multiplier, (int, float)):
+            try:
+                multiplier = float(raw_multiplier)
+            except Exception:
+                pass
+
+        tier = _tier_from_multiplier(multiplier) or _heuristic_tier(model_id)
+        context_window = _coerce_int(meta.get("maxInputTokens"))
+        caps = meta.get("capabilities") if isinstance(meta.get("capabilities"), dict) else {}
+        tool_calling = bool(caps.get("toolCalling", True))
+        has_vision = bool(caps.get("vision", False))
+
+        entry = _new_model_entry(
+            model_id,
+            tier=tier,
+            source="copilot-picker",
+            context_window=context_window,
+            tool_calling=tool_calling,
+        )
+        entry["observed_in_copilot_chat"] = model_id in interacted
+        if has_vision:
+            entry["vision"] = True
+        name = _coerce_text(meta.get("name"))
+        if name:
+            entry["picker_name"] = name
+
+        if model_id in catalog:
+            catalog[model_id] = _merge_entry(catalog[model_id], entry)
+        else:
+            catalog[model_id] = entry
+
+    source_summary: Dict[str, Any] = {
+        "picker_model_count": len(catalog),
+        "picker_models": sorted(catalog.keys()),
+        "interacted_model_count": len(interacted),
+    }
+    return catalog, source_summary
+
+
 def _apply_telemetry(catalog: Dict[str, Dict[str, Any]], telemetry: Dict[str, Dict[str, Any]]) -> None:
     for model_id, metrics in telemetry.items():
         entry = catalog.get(model_id)
@@ -585,14 +743,22 @@ def discover_copilot_models(
     copilot_root: Optional[Path | str] = None,
     help_config_text: Optional[str] = None,
 ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
-    """Discover Copilot Chat models from CLI help and session-state logs."""
+    """Discover Copilot Chat models from CLI help, session-state logs, and the VS Code model picker.
 
+    The VS Code model picker (``state.vscdb``) is the most complete and up-to-date
+    source of available Copilot models.  Models found there are tagged with the
+    ``copilot-picker`` source so the catalog reflects the full picker inventory.
+    """
     text = help_config_text if help_config_text is not None else _run_copilot_help_config(copilot_root)
     cli_models = _parse_copilot_help_config(text)
     session_models, session_sources = _discover_copilot_session_models(copilot_root)
+    picker_catalog, picker_sources = _discover_copilot_picker_models()
+
+    # Start from the union of CLI, session, and picker model IDs.
+    all_known = set(cli_models) | set(session_models) | set(picker_catalog.keys())
 
     catalog: Dict[str, Dict[str, Any]] = {}
-    for model_id in sorted(set(cli_models) | set(session_models)):
+    for model_id in sorted(all_known):
         if not model_id:
             continue
         observed = model_id in session_models
@@ -607,6 +773,11 @@ def discover_copilot_models(
             entry["sources"] = _merge_text_list(entry.get("sources"), "copilot-session-state")
         catalog[model_id] = entry
 
+    # Merge richer picker metadata (context_window, tool_calling, vision, tier from multiplier)
+    # into the base catalog.  picker_catalog wins on context_window and vision; source tags
+    # are accumulated via merge_catalogs.
+    catalog = merge_catalogs(catalog, picker_catalog)
+
     source_summary = {
         "cli_model_count": len(cli_models),
         "cli_models": cli_models,
@@ -617,6 +788,7 @@ def discover_copilot_models(
         "selected_model_counts": session_sources.get("selected_model_counts", {}),
         "current_model_counts": session_sources.get("current_model_counts", {}),
         "last_event_timestamp": session_sources.get("last_event_timestamp"),
+        "picker": picker_sources,
     }
     return catalog, source_summary
 
