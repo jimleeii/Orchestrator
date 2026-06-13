@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import importlib
+import importlib.util
 import re
 import subprocess
 import sys
@@ -31,15 +33,33 @@ ORCHESTRATOR_ROOT = Path(__file__).resolve().parents[1]
 if str(ORCHESTRATOR_ROOT) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_ROOT))
 
-try:
-    from src.trigger_test_prompt import extract_skill_usage as _extract_skill_usage
-except Exception:  # pragma: no cover - fallback when package import is unavailable
-    _extract_skill_usage = None
+def _import_optional_attr(module_name: str, attr_name: str):
+    try:
+        module = importlib.import_module(module_name)
+        return getattr(module, attr_name, None)
+    except Exception:
+        return None
 
-try:
-    from hooks.log_hooks import normalize_checkpoint_metadata as _normalize_checkpoint_metadata
-except Exception:  # pragma: no cover - fallback when package import is unavailable
-    _normalize_checkpoint_metadata = None
+
+_extract_skill_usage = _import_optional_attr("src.trigger_test_prompt", "extract_skill_usage")
+_normalize_checkpoint_metadata = _import_optional_attr("hooks.log_hooks", "normalize_checkpoint_metadata")
+
+
+def _import_normalize_checkpoint_metadata(orchestrator_root: Path):
+    """Import normalize_checkpoint_metadata with file-based fallback."""
+    try:
+        module = importlib.import_module("hooks.log_hooks")
+        return getattr(module, "normalize_checkpoint_metadata", None)
+    except Exception:
+        hooks_file = orchestrator_root / "hooks" / "log_hooks.py"
+        if not hooks_file.exists():
+            return None
+        spec = importlib.util.spec_from_file_location("hooks.log_hooks", hooks_file)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return getattr(module, "normalize_checkpoint_metadata", None)
+    return None
 
 
 def _score_transcript(text: str, subagent: str | None) -> str | None:
@@ -590,6 +610,30 @@ def _merge_model_resolution_metadata(metadata: Dict[str, Any], model_resolution:
         metadata["fallback_reason"] = model_resolution["fallback_reason"]
 
 
+def _find_workspace_root(start: Path) -> Optional[Path]:
+    """Best-effort workspace root discovery for downstream runner --root."""
+    cur = start.resolve()
+    for _ in range(20):
+        if (cur / "AGENTS.md").exists() or (cur / ".git").exists():
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return None
+
+
+def _resolve_runner(orchestrator_root: Path, workspace_root: Optional[Path] = None) -> Path:
+    """Resolve log_hook_runner.py location across install layouts."""
+    primary = orchestrator_root / "scripts" / "log_hook_runner.py"
+    if primary.exists():
+        return primary
+    if workspace_root:
+        repo_layout_runner = workspace_root / ".github" / "agents" / "Orchestrator" / "scripts" / "log_hook_runner.py"
+        if repo_layout_runner.exists():
+            return repo_layout_runner
+    return Path(__file__).resolve().parent / "log_hook_runner.py"
+
+
 def _payload_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {}
 
@@ -863,8 +907,10 @@ def main() -> int:
     summary = summary or "Chat session end"
     tags = tags or "copilot-chat"
     dispatch_path = dispatch_path or "single-agent"
-    if _normalize_checkpoint_metadata:
-        metadata = _normalize_checkpoint_metadata(summary=summary, metadata=metadata, event_flags=event_flags, prompt_command=prompt_command)
+
+    normalize_checkpoint_metadata = _normalize_checkpoint_metadata or _import_normalize_checkpoint_metadata(ORCHESTRATOR_ROOT)
+    if normalize_checkpoint_metadata:
+        metadata = normalize_checkpoint_metadata(summary=summary, metadata=metadata, event_flags=event_flags, prompt_command=prompt_command)
 
     # Score the transcript against the contract-validator checklist and inject
     # the result into metadata before logging, but only when no upstream caller
@@ -891,7 +937,12 @@ def main() -> int:
         tf.close()
         transcript_path = Path(tf.name)
 
-    runner = ORCHESTRATOR_ROOT / "scripts" / "log_hook_runner.py"
+    workspace_root = _find_workspace_root(Path.cwd())
+    runner = _resolve_runner(ORCHESTRATOR_ROOT, workspace_root)
+    if not runner.exists():
+        print(f"Hook runner not found: {runner}", file=sys.stderr)
+        return 5
+
     arg_lines = ["--phase", "post", "--summary", summary]
     if skills:
         arg_lines += ["--skills", skills]
@@ -921,6 +972,8 @@ def main() -> int:
         arg_lines += ["--prompt-command", prompt_command]
     if args.preview:
         arg_lines += ["--preview"]
+    if workspace_root:
+        arg_lines += ["--root", str(workspace_root)]
     if transcript_path:
         arg_lines += ["--transcript-file", str(transcript_path)]
 
@@ -937,8 +990,19 @@ def main() -> int:
             args_file = af.name
 
         cmd = [sys.executable, str(runner), f"@{args_file}"]
-        proc = subprocess.run(cmd, check=False)
+        proc = subprocess.run(cmd, check=False, timeout=120)
+        if proc.returncode != 0:
+            print(
+                f"Hook runner failed with exit code {proc.returncode} (runner={runner}, cwd={Path.cwd()})",
+                file=sys.stderr,
+            )
         return proc.returncode
+    except subprocess.TimeoutExpired:
+        print(f"Hook runner timed out after 120s (runner={runner})", file=sys.stderr)
+        return 6
+    except OSError as exc:
+        print(f"Failed to execute hook runner: {exc} (runner={runner})", file=sys.stderr)
+        return 7
     finally:
         if args_file:
             try:

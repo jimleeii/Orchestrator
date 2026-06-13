@@ -13,6 +13,8 @@ import argparse
 import logging
 import sys
 import json
+import importlib
+import importlib.util
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -98,6 +100,7 @@ def _build_dispatch_metadata(
     model_catalog: Optional[Dict[str, Dict[str, Any]]] = None,
     global_default_model: Optional[str] = None,
     minimum_tier: Optional[str] = None,
+    orchestrator_root: Optional[Path] = None,
 ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     merged = dict(metadata or {})
 
@@ -117,10 +120,7 @@ def _build_dispatch_metadata(
 
     model_resolution = _apply_model_resolution(merged, merged.get("model_resolution"))
     if spawn_payload and model_catalog:
-        try:
-            from src.model_resolver import resolve_model_for_subagent
-        except Exception:
-            resolve_model_for_subagent = None
+        resolve_model_for_subagent = _import_model_resolver(orchestrator_root)
 
         if resolve_model_for_subagent:
             model_resolution = resolve_model_for_subagent(
@@ -140,6 +140,59 @@ def _build_dispatch_metadata(
     return merged, model_resolution
 
 
+def _load_module_from_path(module_name: str, module_path: Path):
+    if not module_path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec and spec.loader:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    return None
+
+
+def _import_model_resolver(orchestrator_root: Optional[Path]):
+    try:
+        module = importlib.import_module("src.model_resolver")
+        return getattr(module, "resolve_model_for_subagent", None)
+    except Exception:
+        pass
+
+    try:
+        module = importlib.import_module("model_resolver")
+        return getattr(module, "resolve_model_for_subagent", None)
+    except Exception:
+        pass
+
+    if orchestrator_root:
+        module = _load_module_from_path("src.model_resolver", orchestrator_root / "src" / "model_resolver.py")
+        if module and hasattr(module, "resolve_model_for_subagent"):
+            return module.resolve_model_for_subagent
+
+    return None
+
+
+def _import_model_discovery(orchestrator_root: Optional[Path]):
+    try:
+        module = importlib.import_module("src.model_discovery")
+        return getattr(module, "load_model_catalog_bundle", None)
+    except Exception:
+        pass
+
+    try:
+        module = importlib.import_module("model_discovery")
+        return getattr(module, "load_model_catalog_bundle", None)
+    except Exception:
+        pass
+
+    if orchestrator_root:
+        module = _load_module_from_path("src.model_discovery", orchestrator_root / "src" / "model_discovery.py")
+        if module and hasattr(module, "load_model_catalog_bundle"):
+            return module.load_model_catalog_bundle
+
+    return None
+
+
 def find_repo_root(start: Optional[Path] = None) -> Path:
     p = Path(start or __file__).resolve()
     cur = p if p.is_dir() else p.parent
@@ -152,6 +205,50 @@ def find_repo_root(start: Optional[Path] = None) -> Path:
             break
         cur = cur.parent
     return Path(__file__).resolve().parents[1]
+
+
+def _resolve_orchestrator_root(workspace_root: Path) -> Path:
+    """Resolve the Orchestrator package root for imports.
+
+    Supports both layouts:
+    1) workspace-root/.github/agents/Orchestrator  (repo checkout)
+    2) .../.github/agents/Orchestrator             (standalone install)
+    """
+    repo_layout_root = workspace_root / ".github" / "agents" / "Orchestrator"
+    if (repo_layout_root / "hooks").exists() and (repo_layout_root / "src").exists():
+        return repo_layout_root
+
+    if (workspace_root / "hooks").exists() and (workspace_root / "src").exists():
+        return workspace_root
+
+    return Path(__file__).resolve().parents[1]
+
+
+def _ensure_orchestrator_import_path(orchestrator_root: Path) -> None:
+    """Ensure Orchestrator package roots are present on ``sys.path`` exactly once."""
+    candidates = [orchestrator_root, Path(__file__).resolve().parents[1]]
+    for candidate in candidates:
+        candidate_str = str(candidate)
+        if candidate.exists() and candidate_str not in sys.path:
+            sys.path.insert(0, candidate_str)
+
+
+def _import_log_hooks(orchestrator_root: Path):
+    """Import ``hooks.log_hooks`` with a robust fallback path loader."""
+    hooks_file = orchestrator_root / "hooks" / "log_hooks.py"
+    if not hooks_file.exists():
+        raise ModuleNotFoundError(f"Expected hooks module not found at: {hooks_file}")
+
+    try:
+        module = importlib.import_module("hooks.log_hooks")
+        return module.log_cycle, module.normalize_checkpoint_metadata
+    except Exception:
+        spec = importlib.util.spec_from_file_location("hooks.log_hooks", hooks_file)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module.log_cycle, module.normalize_checkpoint_metadata
+        raise
 
 
 def main() -> int:
@@ -181,14 +278,18 @@ def main() -> int:
     args = parser.parse_args()
 
     workspace_root = Path(args.root) if args.root else find_repo_root(Path(__file__))
-    orchestrator_root = workspace_root / ".github" / "agents" / "Orchestrator"
+    orchestrator_root = _resolve_orchestrator_root(workspace_root)
     # Ensure the Orchestrator package root is on sys.path so `hooks` can be imported reliably
-    sys.path.insert(0, str(orchestrator_root))
+    _ensure_orchestrator_import_path(orchestrator_root)
 
     try:
-        from hooks.log_hooks import log_cycle, normalize_checkpoint_metadata
+        log_cycle, normalize_checkpoint_metadata = _import_log_hooks(orchestrator_root)
     except Exception as e:  # pragma: no cover - import/runtime guard
-        print("Failed to import hooks.log_hooks:", e, file=sys.stderr)
+        print(
+            "Failed to import hooks.log_hooks:",
+            f"{e} (orchestrator_root={orchestrator_root}, cwd={Path.cwd()})",
+            file=sys.stderr,
+        )
         return 2
 
     skills = [s for s in (args.skills.split(",") if args.skills else []) if s]
@@ -196,7 +297,7 @@ def main() -> int:
     if args.transcript_file:
         tf = Path(args.transcript_file)
         if tf.exists():
-            transcript = tf.read_text(encoding="utf-8")
+            transcript = tf.read_text(encoding="utf-8", errors="surrogateescape")
         else:
             print(f"Transcript file not found: {tf}", file=sys.stderr)
 
@@ -236,15 +337,12 @@ def main() -> int:
                     model_catalog = json.loads(default_catalog.read_text(encoding="utf-8"))
                     logger.debug("Loaded model_catalog from %s", default_catalog)
                 else:
-                    try:
-                        from src.model_discovery import load_model_catalog_bundle
-                    except Exception:
-                        from model_discovery import load_model_catalog_bundle  # type: ignore
-
-                    bundle = load_model_catalog_bundle(repo_root=workspace_root)
-                    model_catalog = bundle.catalog
-                    if not args.global_default_model and bundle.default_model:
-                        args.global_default_model = bundle.default_model
+                    load_model_catalog_bundle = _import_model_discovery(orchestrator_root)
+                    if load_model_catalog_bundle:
+                        bundle = load_model_catalog_bundle(repo_root=workspace_root)
+                        model_catalog = bundle.catalog
+                        if not args.global_default_model and getattr(bundle, "default_model", None):
+                            args.global_default_model = bundle.default_model
             except Exception:
                 # best-effort only
                 model_catalog = {}
@@ -259,6 +357,7 @@ def main() -> int:
         model_catalog=model_catalog,
         global_default_model=args.global_default_model,
         minimum_tier=args.minimum_tier,
+        orchestrator_root=orchestrator_root,
     )
 
     if model_resolution:
