@@ -60,3 +60,4 @@ htmlcov/
 docs/
 plans/
 reviews/
+.worktrees/
