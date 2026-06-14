@@ -1,0 +1,4 @@
+[console_scripts]
+orchestrator = src.cli.__main__:main
+orchestrator-handle-request = scripts.handle_request:main
+orchestrator-package = package_orchestrator:main
