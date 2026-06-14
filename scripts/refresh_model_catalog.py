@@ -20,7 +20,7 @@ def find_repo_root(start: Path | None = None) -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     workspace_root = find_repo_root(Path(__file__))
     if str(workspace_root) not in sys.path:
         sys.path.insert(0, str(workspace_root))

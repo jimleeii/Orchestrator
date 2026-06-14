@@ -97,11 +97,11 @@ def normalize_file(path: Path) -> bool:
     return True
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Backfill placeholder anchors in orchestrator wiki log files.')
     parser.add_argument('--root', help='Repository root. Defaults to discovery from this script location.')
     parser.add_argument('--dry-run', action='store_true', help='Report files that would change without writing them.')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     repo_root = Path(args.root).resolve() if args.root else find_repo_root()
     wiki_root = repo_root / '.wiki' / 'orchestrator'

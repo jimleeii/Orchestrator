@@ -21,5 +21,16 @@ python -m pip install dist/orchestrator-0.1.0-py3-none-any.whl
 
 CLI entry points installed:
 
+- `orchestrator` → umbrella CLI for request, log, wiki, models, validate, and health commands
 - `orchestrator-handle-request` → wrapper around `scripts.handle_request:main`
 - `orchestrator-package` → creates `Orchestrator.zip` (wraps `package_orchestrator.py`)
+
+Common subcommands:
+
+- `orchestrator request`
+- `orchestrator package`
+- `orchestrator log <level>`
+- `orchestrator wiki <action>`
+- `orchestrator models <action>`
+- `orchestrator validate <check>`
+- `orchestrator health <action>`
