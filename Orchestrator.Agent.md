@@ -34,6 +34,12 @@ Load the policy modules at session start and follow their guidance. Key policy f
 - `skills/logging-policy/SKILL.md` — logging specifics
 - `skills/workspace-policy/SKILL.md` — workspace initialization and wiki scaffolding
 
+**Session Start Definition:**  
+A "session start" occurs when either:
+1. No active task ID exists in memory (first invocation in a conversation thread), OR
+2. The `workspace init` command is explicitly invoked, OR
+3. Prior to the first write to any wiki artifact.
+
 ### Policy ownership map (anti-drift)
 
 - Dispatch classification: `skills/workflow-policy/SKILL.md`

@@ -202,7 +202,78 @@ model: AI model to use for Copilot CLI
         self.assertEqual(payload["parent_context"]["cycle_selected_model"], "gpt-5.4-mini")
         self.assertEqual(payload["parent_context"]["model_resolution"], {"model": "gpt-5.4-mini", "source": "copilot-cli"})
 
-    def test_log_hook_runner_live_discovery_populates_catalog_without_stderr_noise(self) -> None:
+    def test_log_hook_runner_uses_cached_catalog_when_exists(self) -> None:
+        """Test case: Cached catalog file exists at skills/model_catalog.json.
+        
+        Expected behavior:
+        - Load catalog from cached file, not live discovery
+        - Should NOT call load_model_catalog_bundle (live discovery)
+        - model_catalog should be populated from file contents
+        """
+        fake_bundle = SimpleNamespace(
+            catalog={
+                "gpt-5.4-mini": {
+                    "tier": "balanced",
+                    "quality_score": 75,
+                    "latency_score": 75,
+                    "cost_score": 60,
+                    "quality_score_source": "tier-prior",
+                    "latency_score_source": "tier-prior",
+                    "cost_score_source": "tier-prior",
+                    "context_window": None,
+                    "tool_calling": True,
+                    "telemetry_partial": True,
+                    "sources": ["copilot-cli"],
+                }
+            },
+            default_model="gpt-5.4-mini",
+            sources={"copilot": {"selected_model": "gpt-5.4-mini"}},
+        )
+        cached_catalog = fake_bundle.catalog
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            temp_root = Path(temp_dir)
+            skills_dir = temp_root / "skills"
+            skills_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create cached catalog file
+            catalog_file = skills_dir / "model_catalog.json"
+            catalog_file.write_text(json.dumps(cached_catalog), encoding="utf-8")
+            
+            with (
+                patch.object(model_discovery, "load_model_catalog_bundle", return_value=fake_bundle) as load_mock,
+                patch("hooks.log_hooks.log_cycle", return_value={"logging_level": "compact", "skill_usage": {}}),
+                patch("hooks.log_hooks.normalize_checkpoint_metadata", side_effect=lambda **kwargs: kwargs["metadata"]),
+                patch("src.model_resolver.resolve_model_for_subagent", return_value={"model": "gpt-5.4-mini", "source": "copilot-cli"}) as resolve_mock,
+                patch.object(sys, "argv", [
+                    "log_hook_runner.py",
+                    "--root",
+                    str(temp_root),
+                    "--subagent-name",
+                    "Senior Developer",
+                    "--spawn-payload",
+                    json.dumps({"name": "Senior Developer"}),
+                ]),
+            ):
+                stderr = io.StringIO()
+                stdout = io.StringIO()
+                with redirect_stderr(stderr), redirect_stdout(stdout):
+                    result = log_hook_runner.main()
+
+            # Verify behavior: catalog was loaded from cache, NOT live discovery
+            self.assertEqual(result, 0, "Expected successful hook runner exit")
+            load_mock.assert_not_called()  # Should NOT call live discovery when cache exists
+            self.assertEqual(resolve_mock.call_args.kwargs["model_catalog"], cached_catalog)
+
+    def test_log_hook_runner_live_discovery_populates_catalog_when_cache_missing(self) -> None:
+        """Test case: Cached catalog file does not exist.
+        
+        Expected behavior:
+        - Fall back to live discovery via load_model_catalog_bundle
+        - Should call load_model_catalog_bundle(repo_root=workspace_root)
+        - Catalog populated from live discovery bundle
+        - No stderr noise about live discovery (uses logger.debug instead)
+        """
         fake_bundle = SimpleNamespace(
             catalog={
                 "gpt-5.4-mini": {
@@ -223,30 +294,37 @@ model: AI model to use for Copilot CLI
             sources={"copilot": {"selected_model": "gpt-5.4-mini"}},
         )
 
-        with (
-            patch.object(model_discovery, "load_model_catalog_bundle", return_value=fake_bundle) as load_mock,
-            patch("hooks.log_hooks.log_cycle", return_value={"logging_level": "compact", "skill_usage": {}}),
-            patch("hooks.log_hooks.normalize_checkpoint_metadata", side_effect=lambda **kwargs: kwargs["metadata"]),
-            patch("src.model_resolver.resolve_model_for_subagent", return_value={"model": "gpt-5.4-mini", "source": "copilot-cli"}) as resolve_mock,
-            patch.object(sys, "argv", [
-                "log_hook_runner.py",
-                "--root",
-                str(ORCHESTRATOR_ROOT),
-                "--subagent-name",
-                "Senior Developer",
-                "--spawn-payload",
-                json.dumps({"name": "Senior Developer"}),
-            ]),
-        ):
-            stderr = io.StringIO()
-            stdout = io.StringIO()
-            with redirect_stderr(stderr), redirect_stdout(stdout):
-                result = log_hook_runner.main()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            temp_root = Path(temp_dir)
+            # Ensure skills dir exists but catalog file does NOT
+            (temp_root / "skills").mkdir(parents=True, exist_ok=True)
+            
+            with (
+                patch.object(model_discovery, "load_model_catalog_bundle", return_value=fake_bundle) as load_mock,
+                patch("hooks.log_hooks.log_cycle", return_value={"logging_level": "compact", "skill_usage": {}}),
+                patch("hooks.log_hooks.normalize_checkpoint_metadata", side_effect=lambda **kwargs: kwargs["metadata"]),
+                patch("src.model_resolver.resolve_model_for_subagent", return_value={"model": "gpt-5.4-mini", "source": "copilot-cli"}) as resolve_mock,
+                patch.object(sys, "argv", [
+                    "log_hook_runner.py",
+                    "--root",
+                    str(temp_root),
+                    "--subagent-name",
+                    "Senior Developer",
+                    "--spawn-payload",
+                    json.dumps({"name": "Senior Developer"}),
+                ]),
+            ):
+                stderr = io.StringIO()
+                stdout = io.StringIO()
+                with redirect_stderr(stderr), redirect_stdout(stdout):
+                    result = log_hook_runner.main()
 
-        self.assertEqual(result, 0)
-        self.assertNotIn("Loaded model_catalog from live discovery", stderr.getvalue())
-        load_mock.assert_called_once_with(repo_root=ORCHESTRATOR_ROOT)
-        self.assertEqual(resolve_mock.call_args.kwargs["model_catalog"], fake_bundle.catalog)
+            # Verify behavior: live discovery was called when cache missing
+            self.assertEqual(result, 0, "Expected successful hook runner exit")
+            load_mock.assert_called_once_with(repo_root=temp_root)  # Should call live discovery
+            self.assertNotIn("Loaded model_catalog from live discovery", stderr.getvalue(), 
+                           "Should not output discovery message to stderr (should use logger.debug)")
+            self.assertEqual(resolve_mock.call_args.kwargs["model_catalog"], fake_bundle.catalog)
 
 
 if __name__ == "__main__":

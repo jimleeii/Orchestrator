@@ -52,6 +52,21 @@ UNRESOLVED_ENTRY_PATTERNS = (
     re.compile(r"^- Decision: keep \| revise \| rollback$", re.MULTILINE),
 )
 
+UNRESOLVED_TOKEN_PATTERNS = (
+    re.compile(r"\{\{CYCLE_ID\}\}", re.IGNORECASE),
+    re.compile(r"\{\{TIMESTAMP[^\}]*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{[A-Z_][A-Z_0-9]*_ID\}\}", re.IGNORECASE),
+    re.compile(r"\{\{TODO[^\}]*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{FIXME[^\}]*\}\}", re.IGNORECASE),
+    re.compile(r"\[FILL_ME_IN\]", re.IGNORECASE),
+    re.compile(r"\[PLACEHOLDER\]", re.IGNORECASE),
+    re.compile(r"\[TODO[^\]]*\]", re.IGNORECASE),
+    re.compile(r"\[FIXME[^\]]*\]", re.IGNORECASE),
+    re.compile(r"\$\{[A-Z_][A-Z_0-9]*\}", re.IGNORECASE),
+)
+
+PLACEHOLDER_MODES = {"strict", "warn", "permissive"}
+
 LOG_COMMANDS: Dict[str, List[str]] = get_append_command_targets()
 
 
@@ -265,6 +280,33 @@ def _validate_rendered_entry(command: str, entry: str) -> str | None:
     return None
 
 
+def check_unresolved_tokens(content: str) -> list[str]:
+    found_tokens: list[str] = []
+    for pattern in UNRESOLVED_TOKEN_PATTERNS:
+        found_tokens.extend(pattern.findall(content))
+    return found_tokens
+
+
+def _resolve_placeholder_mode(allow_placeholders: bool) -> str:
+    env_mode = (os.environ.get("ORCHESTRATOR_PLACEHOLDER_MODE") or "").strip().lower()
+    if env_mode in PLACEHOLDER_MODES:
+        return env_mode
+    return "warn" if allow_placeholders else "strict"
+
+
+def _validate_unresolved_tokens(entry: str, mode: str) -> tuple[bool, list[str]]:
+    found_tokens = check_unresolved_tokens(entry)
+    if not found_tokens:
+        return True, []
+
+    if mode == "permissive":
+        return True, found_tokens
+    if mode == "warn":
+        print(f"WARNING: unresolved placeholder tokens detected: {found_tokens}", file=sys.stderr)
+        return True, found_tokens
+    return False, found_tokens
+
+
 def _find_prompt_templates(repo_root: Path, cmd_name: str) -> tuple[Dict[str, str], str | None]:
     """Find per-target prompt templates in .github/prompts/<cmd_name>.prompt.md.
 
@@ -431,6 +473,7 @@ def main() -> int:
     parser.add_argument("--manifest", action="store_true", help="Print the explicit prompt-command manifest and exit.")
     parser.add_argument("--cycle-id", help="Optional orchestration cycle ID to include in each entry.")
     parser.add_argument("--root", help="Repository root (for testing). If omitted, discovered automatically.")
+    parser.add_argument("--allow-placeholders", action="store_true", help="Allow unresolved placeholder tokens (warn mode unless overridden by ORCHESTRATOR_PLACEHOLDER_MODE).")
     args = parser.parse_args()
 
     repo_root = Path(args.root) if args.root else find_repo_root(Path(__file__))
@@ -489,6 +532,7 @@ def main() -> int:
 
     entries: Dict[Path, str] = {}
     validation_errors: list[str] = []
+    placeholder_mode = _resolve_placeholder_mode(args.allow_placeholders)
     # Attempt to find prompt-based entry templates for this command in prompts/
     cmd_name = cmd_low.lstrip('/')
     prompt_templates, default_template = _find_prompt_templates(repo_root, cmd_name)
@@ -509,6 +553,11 @@ def main() -> int:
                 entry = f"<!-- WARNING: {validation_error} -->\n\n{entry}"
             else:
                 validation_errors.append(f"{path.name}: {validation_error}")
+        placeholders_ok, unresolved_tokens = _validate_unresolved_tokens(entry, placeholder_mode)
+        if unresolved_tokens and placeholders_ok and placeholder_mode == "permissive":
+            print(f"WARNING: unresolved placeholder tokens allowed in permissive mode: {unresolved_tokens}", file=sys.stderr)
+        if not placeholders_ok:
+            validation_errors.append(f"{path.name}: unresolved placeholder tokens: {unresolved_tokens}")
         entries[path] = entry
 
     if validation_errors:

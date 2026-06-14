@@ -139,6 +139,19 @@ CONTINUATION_REQUEST_RE = re.compile(
     r'^(?:please\s+)?(?:approve(?:d)?|perceed|proceed|go(?:\s+ahead)?|continue|carry\s+on|keep\s+going)(?:\s+please)?[.!?]*$',
     re.IGNORECASE,
 )
+UNRESOLVED_TOKEN_PATTERNS = (
+    re.compile(r"\{\{CYCLE_ID\}\}", re.IGNORECASE),
+    re.compile(r"\{\{TIMESTAMP[^\}]*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{[A-Z_][A-Z_0-9]*_ID\}\}", re.IGNORECASE),
+    re.compile(r"\{\{TODO[^\}]*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{FIXME[^\}]*\}\}", re.IGNORECASE),
+    re.compile(r"\[FILL_ME_IN\]", re.IGNORECASE),
+    re.compile(r"\[PLACEHOLDER\]", re.IGNORECASE),
+    re.compile(r"\[TODO[^\]]*\]", re.IGNORECASE),
+    re.compile(r"\[FIXME[^\]]*\]", re.IGNORECASE),
+    re.compile(r"\$\{[A-Z_][A-Z_0-9]*\}", re.IGNORECASE),
+)
+PLACEHOLDER_MODES = {"strict", "warn", "permissive"}
 
 
 def find_repo_root(start: Optional[Path] = None) -> Path:
@@ -294,6 +307,53 @@ def _is_continuation_request(value: Any) -> bool:
     if not text:
         return False
     return bool(CONTINUATION_REQUEST_RE.fullmatch(text))
+
+
+def _resolve_placeholder_mode(allow_placeholders: bool = False) -> str:
+    env_mode = _first_text(os.environ.get('ORCHESTRATOR_PLACEHOLDER_MODE')).lower()
+    if env_mode in PLACEHOLDER_MODES:
+        return env_mode
+    return 'warn' if allow_placeholders else 'strict'
+
+
+def _iter_string_leaves(value: Any, path: str = 'metadata') -> List[tuple[str, str]]:
+    leaves: List[tuple[str, str]] = []
+    if isinstance(value, str):
+        leaves.append((path, value))
+        return leaves
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            leaves.extend(_iter_string_leaves(nested, child_path))
+        return leaves
+    if isinstance(value, (list, tuple, set)):
+        for idx, nested in enumerate(value):
+            child_path = f"{path}[{idx}]"
+            leaves.extend(_iter_string_leaves(nested, child_path))
+    return leaves
+
+
+def _find_unresolved_tokens_in_metadata(metadata: Dict[str, Any]) -> Dict[str, List[str]]:
+    findings: Dict[str, List[str]] = {}
+    for path, text in _iter_string_leaves(metadata):
+        tokens: List[str] = []
+        for pattern in UNRESOLVED_TOKEN_PATTERNS:
+            tokens.extend(pattern.findall(text))
+        if tokens:
+            findings[path] = tokens
+    return findings
+
+
+def _validate_metadata_placeholders(metadata: Dict[str, Any], mode: str) -> tuple[bool, Dict[str, List[str]]]:
+    unresolved = _find_unresolved_tokens_in_metadata(metadata)
+    if not unresolved:
+        return True, {}
+    if mode == 'permissive':
+        return True, unresolved
+    if mode == 'warn':
+        print(f"WARNING: unresolved placeholder tokens detected in metadata: {unresolved}", file=sys.stderr)
+        return True, unresolved
+    return False, unresolved
 
 
 def _has_meaningful_curated_content(metadata: Dict[str, Any], summary: str = "") -> bool:
@@ -821,11 +881,18 @@ def _build_model_selection(metadata: Dict[str, Any]) -> str:
 def choose_logging_level(dispatch_path: str, event_flags: Optional[Dict[str, bool]] = None, config: Optional[Dict[str, bool]] = None) -> str:
     """Choose logging level per `rules/Logging.Policy.md` pseudocode.
 
-    dispatch_path: 'direct' | 'single-agent' | 'multi-agent' (or similar)
+    dispatch_path: 'direct' | 'single-agent' | 'multi-agent' | 'concurrent'
     event_flags: keys may include: 'persistent_mode_change', 'tier_override', 'failure_detected'
     config: supported keys: 'force_persist_all'
 
     Returns: 'minimal' | 'compact' | 'full'
+    
+    Behavior:
+    - force_persist_all: strict override, always returns 'full'
+    - event_flags (persistent_mode_change, tier_override, failure_detected): always returns 'full'
+    - multi-agent or concurrent: always returns 'full'
+    - single-agent: returns 'compact'
+    - direct or other: returns 'minimal'
     """
     event_flags = event_flags or {}
     config = config or {}
@@ -833,7 +900,7 @@ def choose_logging_level(dispatch_path: str, event_flags: Optional[Dict[str, boo
         return 'full'
     if event_flags.get('persistent_mode_change') or event_flags.get('tier_override') or event_flags.get('failure_detected'):
         return 'full'
-    if dispatch_path == 'multi-agent':
+    if dispatch_path in ('multi-agent', 'concurrent'):
         return 'full'
     if dispatch_path == 'single-agent':
         return 'compact'
@@ -849,6 +916,7 @@ def _run_log_command(
     preview: bool = False,
     script_root: Optional[Path] = None,
     context: Optional[Dict[str, Any]] = None,
+    allow_placeholders: bool = False,
 ):
     script = repo_root / 'scripts' / 'log_prompt.py'
     if not script.exists():
@@ -861,6 +929,8 @@ def _run_log_command(
         cmd += ['--tags', str(tags)]
     if script_root:
         cmd += ['--root', str(script_root)]
+    if allow_placeholders:
+        cmd += ['--allow-placeholders']
     if preview:
         cmd += ['--preview']
     # Use run so exceptions propagate to callers for the orchestrator to handle
@@ -1333,6 +1403,7 @@ def log_cycle(
     tags: Optional[str] = None,
     preview: bool = False,
     prompt_command: Optional[str] = None,
+    allow_placeholders: bool = False,
 ) -> Dict[str, Any]:
     """High-level orchestrator hook to persist logs according to policy.
 
@@ -1353,6 +1424,18 @@ def log_cycle(
         event_flags=event_flags,
         prompt_command=prompt_command,
     )
+    placeholder_mode = _resolve_placeholder_mode(allow_placeholders=allow_placeholders)
+    placeholders_valid, unresolved_tokens = _validate_metadata_placeholders(metadata, placeholder_mode)
+    if unresolved_tokens and placeholder_mode == 'permissive':
+        print(f"WARNING: unresolved placeholder tokens allowed in metadata (permissive mode): {unresolved_tokens}", file=sys.stderr)
+    if not placeholders_valid:
+        return {
+            "level": level,
+            "action": "rejected-unresolved-tokens",
+            "reason": "Metadata contains unresolved template tokens",
+            "placeholder_mode": placeholder_mode,
+            "unresolved_tokens": unresolved_tokens,
+        }
     effective_skills = _merge_unique_text_lists(skills or [], metadata.get('skills_used'), metadata.get('skills_used_ordered'))
     initial_full_level = level == 'full'
     requested_full_log = prompt_command in FULL_LOG_COMMANDS
@@ -1408,6 +1491,7 @@ def log_cycle(
             preview=preview,
             script_root=target_root,
             context=context,
+            allow_placeholders=allow_placeholders,
         )
         transcript_path = None
         if transcript and not preview:
@@ -1447,6 +1531,7 @@ def log_cycle(
             preview=preview,
             script_root=target_root,
             context=context,
+            allow_placeholders=allow_placeholders,
         )
         if not preview and metadata.get('curated_checkpoint'):
             _record_dedupe_key(dedupe_root, _first_text(metadata.get('dedupe_key')))
@@ -1477,6 +1562,7 @@ def log_cycle(
             preview=preview,
             script_root=target_root,
             context=context,
+            allow_placeholders=allow_placeholders,
         )
         transcript_path = None
         # Only write transcript when not in preview mode

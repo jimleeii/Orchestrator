@@ -11,6 +11,17 @@ agents: ["Software Architect", "Senior Developer", "Code Reviewer"]
 
 This file is an entry point that references the modular policy skills in `skills/*/SKILL.md`.
 
+### Normative language and interpretation
+
+Use the following terms consistently:
+
+- **MUST**: mandatory behavior; non-compliance is a policy violation.
+- **SHOULD**: recommended behavior; deviation requires an explicit reason in cycle metadata.
+- **MAY**: optional behavior based on context.
+- **Dispatch**: the selected execution path for the current cycle; exactly one value is valid per cycle.
+
+Ambiguous words such as "always," "never," and "prefer" SHOULD be avoided unless expressed as MUST/SHOULD/MAY.
+
 Load the policy modules at session start and follow their guidance. Key policy files:
 
 - `skills/core-identity/SKILL.md` — core settings, responsibilities, and subagent summaries
@@ -33,6 +44,16 @@ When making orchestration decisions, always load the live content of these files
 
 If you need to make a targeted change to orchestration behavior, edit the appropriate `skills/*/SKILL.md` file rather than expanding this top-level file.
 
+### Policy ownership map (anti-drift)
+
+- Dispatch classification: `skills/workflow-policy/SKILL.md`
+- Skill routing: `skills/routing-policy/SKILL.md`
+- Model selection/escalation: `skills/model-policy/SKILL.md`
+- Acceptance and contracts: `skills/quality-policy/SKILL.md`
+- Logging behavior/verbosity/retention: `skills/logging-policy/SKILL.md`
+- Conflict resolution: `skills/policy-precedence/SKILL.md`
+
+Top-level agent text MUST defer to these owners and MUST NOT redefine them inconsistently.
 
 | File | Purpose |
 |---|---|
@@ -133,3 +154,27 @@ When dispatching to a subagent, structure the input as follows (use as the promp
   "contract": "<name of contract to follow, e.g., 'Software Architect Contract'>",
   "previous_output": "<if chaining, include prior subagent result summary, else null>"
 }
+```
+
+## Runtime Integration
+
+The orchestrator runtime performs a best-effort skill discovery at process start and exposes lightweight helpers that the Orchestrator can call to persist artifacts and execute local scripts.
+
+- **Implementation**: See [src/orchestrator_runtime.py](src/orchestrator_runtime.py) and [src/skill_loader.py](src/skill_loader.py).
+- **Auto-init behaviour**: On import/startup the runtime calls `init_orchestrator()` (unless `ORCHESTRATOR_SKIP_AUTOINIT` is set) to scan `skills/*/SKILL.md` and write `skills/skills_manifest.json`.
+- **Runtime APIs**:
+	- `handle_request(prompt, user, dispatch, run_skill, skill_script_name, run_script_path, event_flags=None, metadata=None)` — persist logs/transcript and optionally run a skill script or arbitrary repo script. Returns a dict with `logging_level`, `manifest_summary`, `skill_output`, and `script_output`.
+	- `run_skill_script(skill_name, script_name=None)` — finds and runs the first `.py/.ps1/.sh` in `skills/<skill_name>/` or a specific script if `script_name` provided.
+	- `execute_dispatch_by_type(dispatch_type, prompt, metadata, subagents, run_agent, max_orchestration_cycles)` — execute a dispatch path (`direct`, `single-agent`, `multi-agent`, `concurrent`) with retry-budget enforcement. See [DISPATCH_AND_LOGGING_API.md](DISPATCH_AND_LOGGING_API.md) for details.
+
+### Logging guardrails
+
+- Treat raw hook payloads, especially `PostToolUse`, as telemetry rather than curated knowledge.
+- Persist one concise checkpoint per completed user-visible cycle, not one entry per tool invocation.
+- Only allow six-file curated updates when structured metadata explicitly identifies the request, outcome, and next action.
+- When transcripts contain continuation prompts, only run the auto-plan step when continuation is detected, confidence >= 0.80, and prior context exists; preserve the latest substantive user request and attach compact `session_evidence` so the wiki log reflects the real multi-turn context instead of the first prompt alone.
+
+## Cycle Identity Contract
+
+- The Orchestrator MUST mint exactly one immutable `cycle_id` per orchestration cycle.
+- The same `cycle_id` MUST propagate to behavior logs, skill usage logs, transcript entries, subagent parent context, and escalation/retry metadata.

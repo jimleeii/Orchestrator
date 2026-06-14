@@ -31,7 +31,7 @@ result = execute_dispatch_by_type(
     "cycle_id": str,                 # cycle identifier
     "orchestration_cycle": int,      # current cycle number
     "max_orchestration_cycles": int, # retry budget
-    "status": str,                   # e.g. "direct-complete", "dispatched", "retry-budget-exhausted"
+    "status": str,                   # Execution status (see Status Values below)
     "executed": bool,                # whether dispatch ran
     "retry_budget_exhausted": bool,  # true when max cycles reached
     "retries_remaining": int,
@@ -41,6 +41,25 @@ result = execute_dispatch_by_type(
     "reason": str,                   # reason for outcome (if applicable)
 }
 ```
+
+**Status Values:**
+
+| Status | Meaning | Executed |
+|---|---|---|
+| `direct-complete` | Direct dispatch completed successfully | `true` |
+| `success` | Single-agent or multi-agent dispatch completed with results | `true` |
+| `retry-budget-exhausted` | Max orchestration cycles reached before dispatch | `false` |
+| `not-run` | Dispatch was not executed (missing agents, missing callback, or health-suppressed) | `false` |
+| `failure` | Subagent execution failed with exception | Partial |
+
+**Action Values** (when status != success):
+
+| Action | When Used |
+|---|---|
+| `hard-stop` | Retry budget exhausted |
+| `health-suppressed` | Subagent suppressed by health monitor |
+| `missing-subagents` | No subagents provided for dispatch type |
+| `missing-run-agent` | run_agent callback is required but not provided |
 
 **Concurrent dispatch behavior:**
 - Two or more subagents run in parallel via `ThreadPoolExecutor`.

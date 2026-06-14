@@ -44,6 +44,61 @@ class LoggingCleanupTests(unittest.TestCase):
 
         self.assertIn("Cycle: CYC-20260523-123000-ABCD", entry)
 
+    def test_log_prompt_main_rejects_unresolved_placeholders_in_strict_mode(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_root:
+            repo_root = Path(temp_root)
+            (repo_root / ".git").mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict("os.environ", {}, clear=False):
+                with mock.patch.object(sys, "argv", [
+                    "log_prompt.py",
+                    "/info",
+                    "Cycle {{CYCLE_ID}}",
+                    "--preview",
+                    "--root",
+                    str(repo_root),
+                ]):
+                    rc = log_prompt.main()
+
+        self.assertEqual(rc, 1)
+
+    def test_log_prompt_main_allow_placeholders_switches_to_warn_mode(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_root:
+            repo_root = Path(temp_root)
+            (repo_root / ".git").mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict("os.environ", {}, clear=False):
+                with mock.patch.object(sys, "argv", [
+                    "log_prompt.py",
+                    "/info",
+                    "Cycle {{CYCLE_ID}}",
+                    "--allow-placeholders",
+                    "--preview",
+                    "--root",
+                    str(repo_root),
+                ]):
+                    rc = log_prompt.main()
+
+        self.assertEqual(rc, 0)
+
+    def test_log_prompt_main_permissive_env_allows_unresolved_placeholders(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_root:
+            repo_root = Path(temp_root)
+            (repo_root / ".git").mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict("os.environ", {"ORCHESTRATOR_PLACEHOLDER_MODE": "permissive"}, clear=False):
+                with mock.patch.object(sys, "argv", [
+                    "log_prompt.py",
+                    "/info",
+                    "Cycle {{CYCLE_ID}}",
+                    "--preview",
+                    "--root",
+                    str(repo_root),
+                ]):
+                    rc = log_prompt.main()
+
+        self.assertEqual(rc, 0)
+
     def test_build_log_context_does_not_invent_placeholder_fields(self) -> None:
         context = _build_log_context(
             dispatch_path="single-agent",
@@ -73,6 +128,63 @@ class LoggingCleanupTests(unittest.TestCase):
 
         self.assertEqual(result["action"], "skipped-noise")
         run_log_command.assert_not_called()
+
+    def test_log_cycle_rejects_unresolved_metadata_placeholders_in_strict_mode(self) -> None:
+        with mock.patch("hooks.log_hooks._run_log_command") as run_log_command:
+            result = log_cycle(
+                dispatch_path="single-agent",
+                event_flags={},
+                summary="checkpoint",
+                skills=["prompt-optimizer"],
+                metadata={
+                    "project_request": "Validate placeholder policy",
+                    "change_applied": "Carry unresolved {{TODO: wire field}} token",
+                },
+                preview=True,
+            )
+
+        self.assertEqual(result["action"], "rejected-unresolved-tokens")
+        self.assertEqual(result["placeholder_mode"], "strict")
+        run_log_command.assert_not_called()
+
+    def test_log_cycle_warn_mode_allows_unresolved_metadata_placeholders(self) -> None:
+        completed = subprocess.CompletedProcess(args=["python"], returncode=0)
+        with mock.patch.dict("os.environ", {"ORCHESTRATOR_PLACEHOLDER_MODE": "warn"}, clear=False):
+            with mock.patch("hooks.log_hooks._run_log_command", return_value=completed) as run_log_command:
+                result = log_cycle(
+                    dispatch_path="single-agent",
+                    event_flags={},
+                    summary="checkpoint",
+                    skills=["prompt-optimizer"],
+                    metadata={
+                        "project_request": "Validate placeholder policy",
+                        "change_applied": "Carry unresolved {{TODO: wire field}} token",
+                    },
+                    preview=True,
+                )
+
+        self.assertEqual(result["command"], "/info")
+        run_log_command.assert_called_once()
+
+    def test_log_cycle_allow_placeholders_forwards_to_log_command(self) -> None:
+        completed = subprocess.CompletedProcess(args=["python"], returncode=0)
+        with mock.patch.dict("os.environ", {}, clear=False):
+            with mock.patch("hooks.log_hooks._run_log_command", return_value=completed) as run_log_command:
+                result = log_cycle(
+                    dispatch_path="single-agent",
+                    event_flags={},
+                    summary="checkpoint",
+                    skills=["prompt-optimizer"],
+                    metadata={
+                        "project_request": "Validate placeholder policy",
+                        "change_applied": "Carry unresolved {{TODO: wire field}} token",
+                    },
+                    preview=True,
+                    allow_placeholders=True,
+                )
+
+        self.assertEqual(result["command"], "/info")
+        self.assertTrue(run_log_command.call_args.kwargs.get("allow_placeholders"))
 
     def test_log_cycle_skips_automatic_post_tool_hook_even_with_meaningful_summary(self) -> None:
         with mock.patch("hooks.log_hooks._run_log_command") as run_log_command:

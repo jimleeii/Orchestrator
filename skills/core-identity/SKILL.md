@@ -1,4 +1,3 @@
-
 ---
 name: core-identity
 description: "Core orchestrator identity and configuration guidance (discovery, responsibilities, and model assignment)."
@@ -14,7 +13,7 @@ Purpose: Core orchestration identity settings and high-level responsibilities.
 
 - **`max_orchestration_cycles`**: 3  # global ceiling to avoid infinite retry loops
 - **Logging levels**: `minimal` (direct/simple), `compact` (single-agent), `full` (multi-agent / failures)
-- **Model fallback (simplified default)**: if telemetry is missing, prefer `capability + recent_success` over full scoring
+- **Model fallback (simplified default)**: if telemetry is missing, prefer `capability + recent_success` over full scoring. Telemetry source: GitHub Copilot session state from `~/.copilot/session-state/**/events.jsonl` (see `../../scripts/discover_models.py`)
 - **Policy modules**: load `skills/routing-policy/SKILL.md`, `skills/model-policy/SKILL.md`, `skills/logging-policy/SKILL.md`, and `skills/workspace-policy/SKILL.md` at session start where available
 
 ## Development Orchestrator (Overview)
@@ -27,7 +26,7 @@ At session start and before any rules-enforcement or wiki-scaffold action, read 
 
 The policy skill path is `skills/*/SKILL.md` in this repository.
 
-The `templates/` path is at `.github/agents/templates/`
+The `templates/` path is at `./templates/`
 
 #### Rules (Always Load at Session Start)
 
@@ -75,3 +74,5 @@ Model assignment and detailed scoring behavior are delegated to `skills/model-po
 High-level skill routing and the primary skill lists used for dispatch are maintained in the main orchestrator and per-subagent skill lists. Prefer using concise skill names and treat `%USERPROFILE%\.copilot\skills` as an external read-only source for skill usage logging and metadata validation, not as workspace content.
 
 Refer to `skills/routing-policy/SKILL.md` for detailed routing rules and the narrowest-skill-first rule.
+
+Policy skills are located in `skills/*/SKILL.md` folders (for example `skills/model-policy/SKILL.md`), not in `rules/`.

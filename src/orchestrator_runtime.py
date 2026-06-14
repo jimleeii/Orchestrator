@@ -1644,15 +1644,126 @@ def init_orchestrator(skills_dir: Optional[str] = None, manifest_path: Optional[
     return manifest
 
 
+def validate_script_path(script_path: str) -> tuple[bool, str]:
+    """Validate that script_path is within allowed repository locations.
+    
+    Args:
+        script_path: Path to the script to validate
+    
+    Returns:
+        (is_valid, reason_or_error_msg)
+    """
+    from pathlib import Path
+    
+    trust_mode = os.environ.get("ORCHESTRATOR_TRUST_MODE", "strict").strip().lower()
+
+    # Normalize and resolve to absolute path
+    try:
+        raw_path = Path(script_path).expanduser()
+        abs_path = raw_path.resolve()
+    except (OSError, ValueError) as e:
+        return False, f"Invalid path: {e}"
+
+    if trust_mode == "strict-no-symlinks":
+        try:
+            if raw_path.exists() and raw_path.is_symlink():
+                return False, f"Symlink script paths are blocked in strict-no-symlinks mode: {raw_path}"
+        except OSError as e:
+            return False, f"Unable to evaluate symlink status: {e}"
+    
+    # Find repo root (via .git or env var)
+    repo_root_env = os.environ.get("ORCHESTRATOR_REPO_ROOT")
+    if repo_root_env:
+        repo_root = Path(repo_root_env).resolve()
+    else:
+        # Walk up from script_path looking for .git
+        current = abs_path.parent if abs_path.is_file() else abs_path
+        repo_root = None
+        for ancestor in [current] + list(current.parents):
+            if (ancestor / ".git").exists():
+                repo_root = ancestor
+                break
+        if not repo_root:
+            return False, "Repository root not found (.git not detected)"
+    
+    # Check if path is within allowlist
+    allowed_dirs = [
+        repo_root / "skills",
+        repo_root / "scripts",
+        repo_root / "test-scripts",
+    ]
+    
+    for allowed_dir in allowed_dirs:
+        try:
+            abs_path.relative_to(allowed_dir)
+            return True, ""
+        except ValueError:
+            continue
+    
+    return False, f"Script path outside allowed locations: {abs_path}"
+
+
+def check_unresolved_tokens(content: str, allow_placeholders: bool = False) -> tuple[bool, List[str]]:
+    """Check for unresolved template tokens in content.
+    
+    Args:
+        content: Text to check for unresolved tokens
+        allow_placeholders: If True, only warn; if False, reject
+    
+    Returns:
+        (is_valid, list_of_unresolved_tokens_found)
+    """
+    unresolved_patterns = [
+        r"\{\{CYCLE_ID\}\}",
+        r"\{\{TIMESTAMP[^\}]*\}\}",
+        r"\{\{[A-Z_][A-Z_0-9]*_ID\}\}",
+        r"\{\{TODO[^\}]*\}\}",
+        r"\{\{FIXME[^\}]*\}\}",
+        r"\[FILL_ME_IN\]",
+        r"\[PLACEHOLDER\]",
+        r"\[TODO[^\]]*\]",
+        r"\[FIXME[^\]]*\]",
+        r"\$\{[A-Z_][A-Z_0-9]*\}",
+    ]
+    
+    found_tokens = []
+    for pattern in unresolved_patterns:
+        matches = re.findall(pattern, content, re.IGNORECASE)
+        found_tokens.extend(matches)
+    
+    if not found_tokens:
+        return True, []
+    
+    if allow_placeholders:
+        # Warn but allow
+        print(f"WARNING: Unresolved tokens in content: {found_tokens}", file=sys.stderr)
+        return True, found_tokens
+    else:
+        # Reject
+        return False, found_tokens
+
+
 def run_script(path: str, args: Optional[List[str]] = None, timeout: int = 30) -> str:
     """Run a script file and return combined stdout/stderr output.
 
     Supports Python (`.py`), PowerShell (`.ps1`), and shell (`.sh`) scripts.
+    
+    Validates script path against trust boundaries defined in rules/Trust.Boundary.md
     """
     if not os.path.isabs(path):
         path = os.path.abspath(path)
     if not os.path.exists(path):
         return f"Script not found: {path}"
+
+    # Validate trust boundary
+    trust_mode = os.environ.get("ORCHESTRATOR_TRUST_MODE", "strict")
+    is_valid, reason = validate_script_path(path)
+    if not is_valid:
+        if trust_mode in ("strict", "strict-no-symlinks"):
+            return f"Script execution blocked: {reason}"
+        elif trust_mode == "permissive":
+            print(f"WARNING: {reason}", file=sys.stderr)
+        # else: fall through and log warning
 
     args = args or []
     ext = os.path.splitext(path)[1].lower()

@@ -1,4 +1,0 @@
-hooks
-package_orchestrator
-scripts
-src
