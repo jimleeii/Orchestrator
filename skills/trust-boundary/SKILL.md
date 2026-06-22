@@ -5,7 +5,7 @@ description: "Trust boundaries for orchestrator runtime, tool invocation, and su
 
 # Trust Boundary
 Purpose: define safe delegation and script/tool execution boundaries.
-This skill is a concise operational summary of `../../rules/Trust.Boundary.md`.
+This skill is the canonical trust-boundary policy for this workspace.
 
 ## Trust Boundaries
 Evaluate each request across four trust zones:
@@ -94,7 +94,8 @@ Example scenarios:
 
 ## Related References
 
-- Authoritative policy: `../../rules/Trust.Boundary.md`
-- Validation pattern: `../contract-validator/SKILL.md`
-- Dispatch/intake gate: `../workflow-policy/SKILL.md`
+- Authoritative policy (this workspace): `skills/trust-boundary/SKILL.md` (this file)
+- Conflict resolution: `skills/policy-precedence/SKILL.md`
+- Validation pattern: `skills/contract-validator/SKILL.md`
+- Dispatch/intake gate: `skills/workflow-policy/SKILL.md`
 

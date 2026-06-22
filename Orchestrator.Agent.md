@@ -102,7 +102,13 @@ Notes:
 When the Orchestrator receives a new user request, follow these steps to ensure persistence and optional skill execution before dispatching to subagents:
 
 1. **Normalize** the user input using `prompt-optimizer` to produce an LLM-ready `prompt` string.
-2. **Persist and optionally run a skill script**: call the runtime helper script to persist logs/transcript and (optionally) run a small, audited script inside a skill folder. Example CLI invocation (preferred when the Orchestrator agent can run local CLI tools):
+2. **Persist and optionally run a skill script**: call the runtime helper script to persist logs/transcript and (optionally) run a small, audited script inside a skill folder. When `orchestrator.exe` is available on PATH or in the workspace, the Orchestrator SHOULD prefer it as the primary CLI entrypoint. Example CLI invocation (preferred when the Orchestrator agent can run local CLI tools):
+
+```
+orchestrator.exe request --prompt "<normalized prompt>" --user "<username>" --dispatch "single-agent" --run-skill "contract-validator" --skill-script "my_check.py"
+```
+
+Fallback invocation when `orchestrator.exe` is unavailable:
 
 ```
 python scripts/handle_request.py --prompt "<normalized prompt>" --user "<username>" --dispatch "single-agent" --run-skill "contract-validator" --skill-script "my_check.py"
@@ -198,7 +204,13 @@ prepare_dispatch_payload(
 )
 ```
 
-If you cannot import the repo modules, call the CLI wrapper instead:
+If you cannot import the repo modules, call the CLI wrapper instead (prefer `orchestrator.exe` when available):
+
+```
+orchestrator.exe request --prompt "<normalized prompt>" --user "alice" --run-skill contract-validator
+```
+
+Fallback:
 
 ```
 python scripts/handle_request.py --prompt "<normalized prompt>" --user "alice" --run-skill contract-validator
@@ -229,16 +241,11 @@ Read each template file verbatim before copying it to a missing wiki target. Do 
 
 ## Verification evidence gate (required for completion claims)
 
-Any claim of "implemented," "fixed," or "completed" MUST include:
+Canonical evidence requirements are owned by `skills/quality-policy/SKILL.md` (Required Evidence Schema and Acceptance Gate).
 
-- `claim_status` (`proposed | implemented | verified | deprecated`)
-- `cycle_id`
-- `evidence_type` (test, lint, review, runtime-check, etc.)
-- `artifact_path` (file/log/report path)
-- `timestamp` (UTC preferred)
-- `result` (`pass | fail`)
+This file MUST defer to that policy and MUST NOT redefine required evidence fields.
 
-Claims marked `implemented` or `verified` without evidence fields MUST be treated as non-compliant.
+Operationally, any completion claim that does not satisfy `skills/quality-policy/SKILL.md` is non-compliant.
 
 ## Your Responsibilities
 
@@ -355,25 +362,20 @@ Local skills should be discovered at runtime rather than maintained as a long st
 
 ### Software Architect Contract
 
-Required artifacts:
-- Problem framing (scope, constraints, and non-goals)
-- At least 2 viable approaches with trade-offs
-- Recommended architecture decision with rationale
-- Interface and boundary definitions (components/services/modules)
-- Risk register and mitigation plan
-- Validation strategy (how architecture success will be verified)
+Canonical contract checklist is defined in `skills/quality-policy/SKILL.md` under **Subagent Contract Checklists → Software Architect**.
+
+This section is informational only; enforcement and pass/fail gates are owned by `skills/quality-policy/SKILL.md`.
 
 ### Senior Developer Contract
 
-Required artifacts:
-- Implementation summary tied to approved architecture
-- Files/components changed (or intended change plan if read-only)
-- Test evidence (what was run, what passed/failed, and gaps)
-- Error handling and rollback/guardrail notes
-- Known limitations and follow-up actions
-- Commenting and Region compliance statement (confirm `skills/comment-policy/SKILL.md` checklist satisfied for all changed `.cs` files)
-See `skills/quality-policy/SKILL.md` for the subagent contracts, scoring rubric, acceptance gate, pre-finalization checklist, and automation guidance.
+Canonical contract checklist is defined in `skills/quality-policy/SKILL.md` under **Subagent Contract Checklists → Senior Developer**.
+
+Additional role-specific policy still applies: changed `.cs` files MUST satisfy `skills/comment-policy/SKILL.md`.
+
+This section is informational only; enforcement and pass/fail gates are owned by `skills/quality-policy/SKILL.md`.
 
 ### Code Reviewer Contract
 
-See `skills/quality-policy/SKILL.md` for the Code Reviewer contract, required artifacts, and scoring guidance.
+Canonical contract checklist is defined in `skills/quality-policy/SKILL.md` under **Subagent Contract Checklists → Code Reviewer**.
+
+This section is informational only; enforcement and pass/fail gates are owned by `skills/quality-policy/SKILL.md`.

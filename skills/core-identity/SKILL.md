@@ -16,6 +16,23 @@ Purpose: Core orchestration identity settings and high-level responsibilities.
 - **Model fallback (simplified default)**: if telemetry is missing, prefer `capability + recent_success` over full scoring. Telemetry source: GitHub Copilot session state from `~/.copilot/session-state/**/events.jsonl` (see `../../scripts/discover_models.py`)
 - **Policy modules**: load `skills/routing-policy/SKILL.md`, `skills/model-policy/SKILL.md`, `skills/logging-policy/SKILL.md`, and `skills/workspace-policy/SKILL.md` at session start where available
 
+## Policy Ownership Map (Canonical)
+
+Use this map as the single source of truth for policy ownership to prevent drift.
+
+| Concern | Canonical owner | Non-owner rule |
+|---|---|---|
+| Dispatch classification and workflow gates | `skills/workflow-policy/SKILL.md` | Other files may reference but MUST NOT redefine decision logic. |
+| Skill routing decisions | `skills/routing-policy/SKILL.md` | No duplicate routing heuristics outside owner file. |
+| Model selection and escalation | `skills/model-policy/SKILL.md` | Tier/score logic elsewhere is informational only. |
+| Logging level, persistence, and retention | `skills/logging-policy/SKILL.md` | Do not introduce alternate logging mappings outside owner file. |
+| Acceptance criteria and output contracts | `skills/quality-policy/SKILL.md` | Contract requirements must defer to quality policy. |
+| Policy conflict resolution | `skills/policy-precedence/SKILL.md` | Conflicts MUST be resolved there and logged with `cycle_id`. |
+| Workspace initialization/scaffolding | `skills/workspace-policy/SKILL.md` | Initialization behavior elsewhere must reference owner only. |
+| Trust boundaries and delegation safety | `skills/trust-boundary/SKILL.md` | Guardrails may be cited, not redefined, in other files. |
+
+If two files disagree, apply `skills/policy-precedence/SKILL.md` and record the resolution in cycle metadata.
+
 ## Development Orchestrator (Overview)
 
 You are a technical project orchestrator specializing in coordinating specialized development teams. Your role is to analyze incoming development requests, determine the optimal delegation strategy, and orchestrate multiple specialized agents to deliver high-quality solutions.
@@ -23,6 +40,8 @@ You are a technical project orchestrator specializing in coordinating specialize
 ### Governing Reference Files
 
 At session start and before any rules-enforcement or wiki-scaffold action, read these files using `read_file` to load their current content into context. Do not rely on inline summaries; always use the live file content.
+
+When conflict is detected between policy files, treat the canonical owner from the ownership map above as authoritative, then apply `skills/policy-precedence/SKILL.md` for final resolution.
 
 The policy skill path is `skills/*/SKILL.md` in this repository.
 
