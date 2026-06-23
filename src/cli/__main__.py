@@ -103,6 +103,29 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="orchestrator")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("request", help="Route to scripts.handle_request:main")
+    # dispatch: execute a dispatch path using the runtime
+    dispatch_parser = subparsers.add_parser("dispatch", help="Execute a dispatch path using the orchestrator runtime")
+    dispatch_parser.add_argument("--dispatch-type", "-d", default="single-agent",
+                                 choices=["direct", "single-agent", "multi-agent", "concurrent"],
+                                 help="Dispatch path to execute")
+    dispatch_parser.add_argument("--prompt", "-p", default="", help="Prompt to dispatch")
+    dispatch_parser.add_argument("--user", "-u", default="runtime-user", help="User name")
+    dispatch_parser.add_argument("--subagents", nargs="*", help="List of subagent ids/names")
+    dispatch_parser.add_argument("--max-orchestration-cycles", type=int, help="Override max orchestration cycles")
+    dispatch_parser.add_argument("--metadata", help="Structured JSON metadata to pass into the dispatch")
+    dispatch_parser.add_argument("--json", action="store_true", help="Print full JSON output")
+
+    # prepare-dispatch: prepare a dispatch payload (persistence + context) and print JSON
+    prep_parser = subparsers.add_parser("prepare-dispatch", help="Prepare a dispatch payload (persistence + context) and print JSON")
+    prep_parser.add_argument("--prompt", "-p", default="", help="Prompt to persist")
+    prep_parser.add_argument("--user", "-u", default="runtime-user", help="User name")
+    prep_parser.add_argument("--dispatch", "-d", default="single-agent",
+                             choices=["direct", "single-agent", "multi-agent", "concurrent"],
+                             help="Dispatch path to prepare for")
+    prep_parser.add_argument("--subagent", help="Subagent name to prepare payload for")
+    prep_parser.add_argument("--spawn-payload", help="JSON spawn payload to include in preparation")
+    prep_parser.add_argument("--metadata", help="Structured JSON metadata to carry into the persistence step")
+
     subparsers.add_parser("package", help="Route to package_orchestrator:main")
     models_parser = subparsers.add_parser("models", help="Route to scripts.discover_models:main and scripts.refresh_model_catalog:main")
     models_subparsers = models_parser.add_subparsers(dest="action", required=True)
@@ -148,6 +171,75 @@ def main(argv=None):
         from scripts.handle_request import main as request_main
 
         return request_main(remainder)
+
+    if args.command == "dispatch":
+        # Execute a dispatch path using the orchestrator runtime
+        try:
+            from src.orchestrator_runtime import execute_dispatch_by_type
+        except Exception:
+            from orchestrator_runtime import execute_dispatch_by_type  # type: ignore
+
+        # parse metadata if supplied
+        metadata = None
+        if getattr(args, "metadata", None):
+            try:
+                metadata = json.loads(args.metadata)
+            except Exception as exc:
+                parser = _build_parser()
+                parser.error(f"--metadata must be valid JSON: {exc}")
+
+        result = execute_dispatch_by_type(
+            dispatch_type=args.dispatch_type,
+            prompt=args.prompt,
+            metadata=metadata,
+            subagents=args.subagents,
+            max_orchestration_cycles=args.max_orchestration_cycles,
+        )
+
+        if args.json:
+            _print_json(result)
+        else:
+            # Print a compact one-line summary
+            print(json.dumps({
+                "dispatch": result.get("dispatch"),
+                "cycle_id": result.get("cycle_id"),
+                "status": result.get("status"),
+                "subagents": result.get("subagents"),
+            }, ensure_ascii=False))
+
+        return 0
+
+    if args.command == "prepare-dispatch":
+        try:
+            from src.orchestrator_runtime import prepare_dispatch_payload
+        except Exception:
+            from orchestrator_runtime import prepare_dispatch_payload  # type: ignore
+
+        metadata = None
+        spawn_payload = None
+        if getattr(args, "metadata", None):
+            try:
+                metadata = json.loads(args.metadata)
+            except Exception as exc:
+                parser = _build_parser()
+                parser.error(f"--metadata must be valid JSON: {exc}")
+        if getattr(args, "spawn_payload", None):
+            try:
+                spawn_payload = json.loads(args.spawn_payload)
+            except Exception as exc:
+                parser = _build_parser()
+                parser.error(f"--spawn-payload must be valid JSON: {exc}")
+
+        payload = prepare_dispatch_payload(
+            prompt=args.prompt,
+            user=args.user,
+            dispatch=args.dispatch,
+            subagent_name=args.subagent,
+            spawn_payload=spawn_payload,
+            metadata=metadata,
+        )
+        _print_json(payload)
+        return 0
 
     if args.command == "package":
         from package_orchestrator import main as package_main

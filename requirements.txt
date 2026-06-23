@@ -1,2 +1,6 @@
 ruff
 isort
+portalocker
+# Strict schema validation
+pydantic>=1.10.0
+# optional runtime for metrics HTTP server is stdlib-only; no extra deps required

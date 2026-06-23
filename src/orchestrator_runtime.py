@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Callable
+import threading
 
 try:
     # When running as part of the package tests, import via the package name
@@ -68,6 +69,259 @@ from src.skill_loader import discover_skills, save_manifest
 from src.policy_reloader import PolicyReloader
 
 logger = logging.getLogger(__name__)
+
+
+def _is_structured_checklist(text: str) -> bool:
+    """Detect whether the assistant output contains a structured checklist update.
+
+    Expected formats (examples):
+    - JSON object only: {"event": "checklist_update", "step_id": "S1", "status": "done"}
+    - Prefixed: "CHECKLIST_UPDATE: { ...json... }"
+
+    Returns True when a JSON object can be parsed and contains checklist-like fields.
+    """
+    if not text:
+        return False
+    s = text.strip()
+    # If prefixed with CHECKLIST_UPDATE: try to parse the trailing JSON
+    idx = s.find("CHECKLIST_UPDATE:")
+    if idx != -1:
+        candidate = s[idx + len("CHECKLIST_UPDATE:"):].strip()
+    else:
+        candidate = s
+
+    # If candidate does not look like JSON, bail out quickly
+    if not (candidate.startswith("{") or candidate.startswith("[")):
+        return False
+
+    try:
+        obj = json.loads(candidate)
+    except Exception:
+        return False
+
+    if isinstance(obj, dict):
+        # Heuristic: must include a step identifier and status or an explicit event type
+        if obj.get("event") and str(obj.get("event")).lower().startswith("checklist"):
+            return True
+        if obj.get("type") and str(obj.get("type")).lower().startswith("checklist"):
+            return True
+        if "step_id" in obj and "status" in obj:
+            return True
+
+    return False
+
+
+def _parse_structured_suggestion(text: str) -> Optional[Dict[str, Any]]:
+    """Attempt to parse a structured suggestion from assistant output.
+
+    Acceptable forms:
+    - Prefixed: "SUGGESTION: {\"title\": \"T\", \"body\": \"...\" }"
+    - Plain JSON object: {"title": "T", "body": "...", "tags": [...]} 
+    Returns a dict when parsed and it contains at least a title or body, otherwise None.
+    """
+    if not text:
+        return None
+    s = text.strip()
+    idx = s.find("SUGGESTION:")
+    candidate = None
+    if idx != -1:
+        candidate = s[idx + len("SUGGESTION:"):].strip()
+    else:
+        # If entire text is JSON-like, try to parse it
+        if s.startswith("{") or s.startswith("["):
+            candidate = s
+
+    if not candidate:
+        return None
+
+    try:
+        obj = json.loads(candidate)
+    except Exception:
+        return None
+
+    if isinstance(obj, dict):
+        # require minimal fields - prefer validation for stricter downstream handling
+        validated = _validate_suggestion_schema(obj, strict=True)
+        return validated
+    return None
+
+
+from pydantic import BaseModel, ValidationError, validator
+
+
+class _SuggestionModel(BaseModel if BaseModel is not None else object):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    text: Optional[str] = None
+    tags: Optional[List[str]] = None
+    severity: Optional[str] = None
+    id: Optional[str] = None
+    timestamp: Optional[Any] = None
+    meta: Optional[Dict[str, Any]] = None
+
+    @validator("tags", pre=True, always=False)
+    def _validate_tags(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, (list, tuple)):
+            raise ValueError("tags must be a list of strings")
+        return [str(x).strip() for x in v]
+
+    @validator("severity", pre=True, always=False)
+    def _validate_severity(cls, v):
+        if v is None:
+            return v
+        s = str(v).lower().strip()
+        if s not in ("low", "medium", "high"):
+            raise ValueError("severity must be one of: low, medium, high")
+        return s
+
+    @validator("title", "body", "text", pre=True, always=False)
+    def _strip_strings(cls, v):
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+def _validate_suggestion_schema(obj: Dict[str, Any], strict: bool = True) -> Optional[Dict[str, Any]]:
+    """Validate and normalize a suggestion object using pydantic.
+
+    Strict mode requires at least one of `title` or `body`/`text` to be present and non-empty.
+    Returns a dict with normalized fields on success, or None on validation failure.
+    """
+    if not isinstance(obj, dict):
+        return None
+
+    # pydantic is required; fail fast if not present (dependency must be installed)
+
+    try:
+        m = _SuggestionModel(**obj)
+    except ValidationError:
+        return None
+
+    data = m.dict(exclude_none=True)
+    # enforce strict presence
+    if strict:
+        if not (data.get("title") or data.get("body") or data.get("text")):
+            return None
+
+    # normalize body to 'body' if 'text' present and body missing
+    if "text" in data and "body" not in data:
+        data["body"] = data.pop("text")
+
+    return data
+
+
+def export_suggestion_json_schema(output_path: str) -> None:
+    """Generate JSON Schema from the pydantic suggestion model and write to output_path.
+
+    The schema is written with UTF-8 encoding. Parent directories will be created.
+    """
+    schema = _SuggestionModel.schema()
+    outp = os.path.abspath(output_path)
+    parent = os.path.dirname(outp)
+    os.makedirs(parent, exist_ok=True)
+    with open(outp, "w", encoding="utf-8") as f:
+        json.dump(schema, f, indent=2, ensure_ascii=False)
+
+
+def append_suggestion_entry(repo_root: str, entry: Dict[str, Any]) -> None:
+    """Append a suggestion entry to the workspace suggestions JSONL file.
+
+    The file is created at <repo_root>/.suggestions/suggestions.jsonl and is appended
+    in an atomic-friendly manner.
+    """
+    try:
+        out_dir = os.path.join(repo_root, ".suggestions")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, "suggestions.jsonl")
+
+        # Process-level lock to guard concurrent thread appends in the same process.
+        # This helps on Windows where advisory file locks are awkward for variable-length writes.
+        global _suggestions_file_lock
+        try:
+            _suggestions_file_lock
+        except NameError:
+            _suggestions_file_lock = threading.Lock()
+
+        with _suggestions_file_lock:
+            # Prefer portalocker for robust cross-process exclusive locking when available.
+            try:
+                import portalocker  # type: ignore
+                use_portalocker = True
+            except Exception:
+                use_portalocker = False
+
+            if use_portalocker:
+                # portalocker will handle platform differences
+                with open(path, "a", encoding="utf-8") as f:
+                    try:
+                        portalocker.lock(f, portalocker.LOCK_EX)
+                    except Exception:
+                        # best-effort lock
+                        pass
+                    try:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                        f.flush()
+                    finally:
+                        try:
+                            portalocker.unlock(f)
+                        except Exception:
+                            pass
+            else:
+                # Fallback: platform-specific advisory locks (best-effort)
+                if os.name == "nt":
+                    import msvcrt
+
+                    # Open file in binary append mode for locking semantics
+                    with open(path, "ab") as f:
+                        try:
+                            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                        except Exception:
+                            # best-effort lock; continue to write anyway
+                            pass
+                        try:
+                            line = (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8")
+                            f.write(line)
+                            f.flush()
+                        finally:
+                            try:
+                                f.seek(0)
+                                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                            except Exception:
+                                pass
+                else:
+                    import fcntl
+
+                    # Open file in text append mode
+                    with open(path, "a", encoding="utf-8") as f:
+                        try:
+                            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                        except Exception:
+                            # best-effort lock; continue
+                            pass
+                        try:
+                            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                            f.flush()
+                        finally:
+                            try:
+                                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                            except Exception:
+                                pass
+    except Exception:
+        logger.exception("Failed to append suggestion entry")
+
+
+def append_suggestion_telemetry(repo_root: str, event: Dict[str, Any]) -> None:
+    """Append a telemetry event to .suggestions/telemetry.jsonl (best-effort)."""
+    try:
+        out_dir = os.path.join(repo_root, ".suggestions")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, "telemetry.jsonl")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
+        logger.exception("Failed to append suggestion telemetry")
 
 # Global policy reloader instance (initialized on first use)
 _policy_reloader: Optional[PolicyReloader] = None
@@ -1483,7 +1737,33 @@ def persist_cycle(
 
     # If hooks are available, use them to persist logs (they call the log CLI)
     if log_cycle:
+        # If follow-plan execution mode is requested, redirect suggestions into suggestions.jsonl
+        execution_mode = metadata.get("execution_mode") if isinstance(metadata, dict) else None
         transcript_text = output_text if logging_level == "full" else None
+
+        if execution_mode == "follow_plan" and output_text:
+            # Only accept structured checklist updates (JSON). Any other output is treated as a suggestion.
+            is_checklist_update = _is_structured_checklist(output_text)
+            if not is_checklist_update:
+                entry = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "task_id": metadata.get("task_id") or metadata.get("cycle_id"),
+                    "cycle_id": metadata.get("cycle_id"),
+                    "author": user,
+                }
+                # Try to parse a structured suggestion block (preferred schema)
+                parsed = _parse_structured_suggestion(output_text)
+                if parsed:
+                    entry["suggestion"] = parsed
+                    entry["text"] = parsed.get("title") or parsed.get("body") or "(structured suggestion)"
+                    append_suggestion_telemetry(os.getcwd(), {"event": "structured_suppressed_suggestion", "cycle_id": metadata.get("cycle_id"), "timestamp": datetime.utcnow().isoformat() + "Z"})
+                else:
+                    entry["text"] = output_text
+                    append_suggestion_telemetry(os.getcwd(), {"event": "suppressed_suggestion", "cycle_id": metadata.get("cycle_id"), "timestamp": datetime.utcnow().isoformat() + "Z"})
+                append_suggestion_entry(os.getcwd(), entry)
+                # Replace transcript_text with a minimal ack so suggestions are not echoed inline
+                transcript_text = f"Acknowledged. Continuing per plan. (Suggestion logged)"
+
         result = log_cycle(
             dispatch_path=dispatch_path,
             event_flags=event_flags,
@@ -1498,10 +1778,50 @@ def persist_cycle(
         )
         # Report persistence result minimally for visibility
         print(f"log_cycle result: {result}")
+
+        # If follow_plan, run the suggestion processor to render evaluated report
+        try:
+                if execution_mode == "follow_plan":
+                    proc_in = os.path.join(os.getcwd(), ".suggestions", "suggestions.jsonl")
+                    out_dir = os.path.join(os.getcwd(), "suggestions_evaluated")
+                    os.makedirs(out_dir, exist_ok=True)
+                    out_md = os.path.join(out_dir, f"{metadata.get('cycle_id') or 'task'}.md")
+                    # call local script and capture result
+                    runner = [sys.executable, os.path.join("scripts", "process_suggestions.py"), "-i", proc_in, "-o", out_md]
+                    try:
+                        res = subprocess.run(runner, check=False, capture_output=True, text=True)
+                        append_suggestion_telemetry(os.getcwd(), {"event": "processor_run", "cycle_id": metadata.get("cycle_id"), "returncode": res.returncode, "stdout": (res.stdout or "")[:200], "stderr": (res.stderr or "")[:200], "timestamp": datetime.utcnow().isoformat() + "Z"})
+                    except Exception as ex:
+                        append_suggestion_telemetry(os.getcwd(), {"event": "processor_error", "cycle_id": metadata.get("cycle_id"), "error": str(ex), "timestamp": datetime.utcnow().isoformat() + "Z"})
+                    # Also run telemetry aggregator to produce metrics/summary
+                    try:
+                        agg_runner = [sys.executable, os.path.join("scripts", "aggregate_suggestions_telemetry.py"), "--root", os.getcwd()]
+                        subprocess.run(agg_runner, check=False, capture_output=True, text=True)
+                    except Exception:
+                        # non-fatal
+                        pass
+        except Exception:
+            logger.exception("Failed to auto-run suggestion processor")
+
         return skill_usage
 
     # Fallback behaviour: persist using legacy functions
     if logging_level == "full":
+        execution_mode = metadata.get("execution_mode") if isinstance(metadata, dict) else None
+        # If follow_plan, capture suggestions and replace output_text with ack
+        if execution_mode == "follow_plan" and output_text:
+            is_checklist_update = _is_structured_checklist(output_text)
+            if not is_checklist_update:
+                entry = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "task_id": metadata.get("task_id") or metadata.get("cycle_id"),
+                    "cycle_id": metadata.get("cycle_id"),
+                    "author": user,
+                    "text": output_text,
+                }
+                append_suggestion_entry(os.getcwd(), entry)
+                output_text = f"Acknowledged. Continuing per plan. (Suggestion logged)"
+
         append_behavior_log(wiki_root, prompt, user=user, metadata=metadata)
         skill_usage = append_skill_usage_log(
             wiki_root,
@@ -1513,10 +1833,40 @@ def persist_cycle(
             metadata=metadata,
         )
         path = write_transcript(wiki_root, prompt, output_text=output_text, skill_usage=skill_usage)
+
+        # Auto-run processor when in follow_plan mode
+        try:
+                if execution_mode == "follow_plan":
+                    proc_in = os.path.join(os.getcwd(), ".suggestions", "suggestions.jsonl")
+                    out_dir = os.path.join(os.getcwd(), "suggestions_evaluated")
+                    os.makedirs(out_dir, exist_ok=True)
+                    out_md = os.path.join(out_dir, f"{metadata.get('cycle_id') or 'task'}.md")
+                    runner = [sys.executable, os.path.join("scripts", "process_suggestions.py"), "-i", proc_in, "-o", out_md]
+                    try:
+                        res = subprocess.run(runner, check=False, capture_output=True, text=True)
+                        append_suggestion_telemetry(os.getcwd(), {"event": "processor_run", "cycle_id": metadata.get("cycle_id"), "returncode": res.returncode, "stdout": (res.stdout or "")[:200], "stderr": (res.stderr or "")[:200], "timestamp": datetime.utcnow().isoformat() + "Z"})
+                    except Exception as ex:
+                        append_suggestion_telemetry(os.getcwd(), {"event": "processor_error", "cycle_id": metadata.get("cycle_id"), "error": str(ex), "timestamp": datetime.utcnow().isoformat() + "Z"})
+        except Exception:
+            logger.exception("Failed to auto-run suggestion processor (fallback)")
+
         print(f"Persisted full artifacts (fallback): {path}")
         return skill_usage
 
     if logging_level == "compact":
+        execution_mode = metadata.get("execution_mode") if isinstance(metadata, dict) else None
+        if execution_mode == "follow_plan" and output_text:
+            is_checklist_update = _is_structured_checklist(output_text)
+            if not is_checklist_update:
+                entry = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "task_id": metadata.get("task_id") or metadata.get("cycle_id"),
+                    "cycle_id": metadata.get("cycle_id"),
+                    "author": user,
+                    "text": output_text,
+                }
+                append_suggestion_entry(os.getcwd(), entry)
+
         append_behavior_log(wiki_root, prompt, user=user, metadata=metadata)
         skill_usage = append_skill_usage_log(
             wiki_root,

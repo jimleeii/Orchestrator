@@ -333,6 +333,83 @@ def test_dispatches_log_cleanup_level(monkeypatch):
     assert captured["argv"] == ["/cleanup", "--manifest"]
 
 
+def _load_local_cli_main():
+    # Load the workspace copy of src/cli/__main__.py directly to avoid
+    # importing an installed 'src' package from site-packages during testing.
+    import importlib.util
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    cli_path = repo_root / "src" / "cli" / "__main__.py"
+    spec = importlib.util.spec_from_file_location("local_cli_main", str(cli_path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore
+    return module.main
+
+
+def test_dispatch_subcommand_calls_runtime(monkeypatch):
+    """Ensure top-level CLI dispatch subcommand calls execute_dispatch_by_type and prints JSON."""
+    main = _load_local_cli_main()
+
+    captured = {}
+
+    def fake_execute(dispatch_type, prompt, metadata=None, subagents=None, max_orchestration_cycles=None):
+        captured["args"] = dict(dispatch_type=dispatch_type, prompt=prompt, metadata=metadata, subagents=subagents,
+                                  max_orchestration_cycles=max_orchestration_cycles)
+        return {"dispatch": dispatch_type, "cycle_id": "CYC-1", "status": "success", "subagents": subagents}
+
+    import types, sys
+    # Create a fake module to satisfy both import paths used by the CLI
+    fake_runtime = types.ModuleType("fake_runtime")
+    fake_runtime.execute_dispatch_by_type = fake_execute
+    sys.modules["src.orchestrator_runtime"] = fake_runtime
+    sys.modules["orchestrator_runtime"] = fake_runtime
+
+    import io
+    from contextlib import redirect_stdout
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        result = main(["dispatch", "--dispatch-type", "single-agent", "--prompt", "hello", "--subagents", "AgentA", "AgentB"])
+
+    assert result == 0
+    out = buf.getvalue().strip()
+    assert "CYC-1" in out or '"dispatch": "single-agent"' in out
+    assert captured["args"]["dispatch_type"] == "single-agent"
+    assert captured["args"]["prompt"] == "hello"
+
+
+def test_prepare_dispatch_subcommand_calls_runtime(monkeypatch):
+    """Ensure prepare-dispatch prints the payload returned by prepare_dispatch_payload."""
+    main = _load_local_cli_main()
+
+    captured = {}
+
+    def fake_prepare(prompt, user, dispatch, subagent_name, spawn_payload=None, metadata=None):
+        captured["args"] = dict(prompt=prompt, user=user, dispatch=dispatch, subagent_name=subagent_name,
+                                  spawn_payload=spawn_payload, metadata=metadata)
+        return {"prompt": prompt, "parent_context": {"persistence": {"cycle_id": "CYC-2"}}}
+
+    import types, sys
+    fake_runtime = types.ModuleType("fake_runtime")
+    fake_runtime.prepare_dispatch_payload = fake_prepare
+    sys.modules["src.orchestrator_runtime"] = fake_runtime
+    sys.modules["orchestrator_runtime"] = fake_runtime
+
+    import io
+    from contextlib import redirect_stdout
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        result = main(["prepare-dispatch", "--prompt", "do it", "--user", "tester", "--subagent", "AgentA", "--spawn-payload", '{"name":"AgentA"}'])
+
+    assert result == 0
+    out = buf.getvalue().strip()
+    assert '"cycle_id": "CYC-2"' in out or 'CYC-2' in out
+    assert captured["args"]["prompt"] == "do it"
+    assert captured["args"]["subagent_name"] == "AgentA"
+
+
 def test_setup_cfg_exposes_top_level_orchestrator_entry_point():
     config = configparser.ConfigParser()
     config.optionxform = str

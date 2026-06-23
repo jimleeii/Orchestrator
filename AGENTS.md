@@ -98,6 +98,17 @@ This repository follows the AGENTS.md template recommendations and Karpathy beha
 
 Use this appendix as a quick reminder; keep the main sections above specific and actionable for agents. When in doubt, prefer short, tested commands and explicit verification steps.
 
+Follow-plan execution mode
+-------------------------
+
+This repository supports an opt-in `execution_mode` metadata flag with the value `follow_plan`. When set, the Orchestrator will:
+
+- Suppress inline assistant suggestions and instead append them to `.suggestions/suggestions.jsonl` for later evaluation.
+- Replace persisted transcripts with a short acknowledgement so the running plan is not interrupted by suggestions.
+- Attempt to auto-run the local `scripts/process_suggestions.py` to produce an evaluated report in `suggestions_evaluated/<cycle_id>.md`.
+
+Agents that participate in follow-plan runs MUST emit structured checklist updates rather than free-text progress messages. See `prompts/follow-plan.prompt.md` for suggested system prompt snippets.
+
 Local Copilot skills discovery: Agents can reference locally installed Copilot skills and load the live content of these files via `read_file`. These files are found at `%USERPROFILE%/.copilot/skills`. Consider these skill names when writing routing rules or workspace initialization logic.
 
 ## Agent Uage (When Orchestrator is active)

@@ -1,0 +1,72 @@
+name: Generate and validate suggestion JSON Schema
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  validate-schema:
+    name: Validate suggestion JSON Schema
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+
+      - name: Generate suggestion schema into a temp file
+        run: |
+          python scripts/generate_suggestion_schema.py --output .suggestions/suggestion_schema.generated.json
+
+      - name: Check generated schema matches committed artifact (normalized JSON)
+        run: |
+          echo "Comparing generated schema with committed .suggestions/suggestion_schema.json (normalized JSON, sort keys)"
+          python - <<'PY'
+            import json,sys,os,difflib
+            committed='.suggestions/suggestion_schema.json'
+            generated='.suggestions/suggestion_schema.generated.json'
+            if not os.path.exists(committed):
+                print(f"ERROR: Committed {committed} is missing", file=sys.stderr)
+                sys.exit(2)
+            with open(committed, 'r', encoding='utf-8') as f:
+                a=json.load(f)
+            with open(generated, 'r', encoding='utf-8') as f:
+                b=json.load(f)
+            na=json.dumps(a, sort_keys=True, separators=(',',':'))
+            nb=json.dumps(b, sort_keys=True, separators=(',',':'))
+            if na!=nb:
+                aa=json.dumps(a, sort_keys=True, indent=2)
+                bb=json.dumps(b, sort_keys=True, indent=2)
+                print('The suggestion schema committed in the repo is out of date. Regenerate using: python scripts/generate_suggestion_schema.py --output .suggestions/suggestion_schema.json', file=sys.stderr)
+                for line in difflib.unified_diff(aa.splitlines(), bb.splitlines(), fromfile=committed+' (normalized)', tofile=generated+' (normalized)', lineterm=''):
+                    print(line)
+                sys.exit(1)
+            print('Schemas match (normalized)')
+          PY
+
+      - name: Cleanup generated file
+        if: ${{ always() }}
+        run: |
+          python - <<'PY'
+            import os
+            try:
+                os.remove('.suggestions/suggestion_schema.generated.json')
+            except Exception:
+                pass
+            print('cleanup done')
+          PY
