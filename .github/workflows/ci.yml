@@ -27,6 +27,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
+      - name: Prepare scripts for hooks tests
+        run: |
+          mkdir -p .github/agents/Orchestrator/scripts
+          cp -r scripts/* .github/agents/Orchestrator/scripts/
+        shell: bash
+
       - name: Run tests
         env:
           ORCHESTRATOR_SKIP_AUTOINIT: '1'
