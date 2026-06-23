@@ -315,8 +315,13 @@ def _find_prompt_templates(repo_root: Path, cmd_name: str) -> tuple[Dict[str, st
     - default template for prompt files that define a single template block
     """
     prompt_path = repo_root / '.github' / 'prompts' / f"{cmd_name}.prompt.md"
+    # Fallback to repository-root `prompts/` directory when present (repo layout)
     if not prompt_path.exists():
-        return {}, None
+        alt = repo_root / 'prompts' / f"{cmd_name}.prompt.md"
+        if alt.exists():
+            prompt_path = alt
+        else:
+            return {}, None
     text = prompt_path.read_text(encoding='utf-8')
     lines = text.splitlines()
     templates: Dict[str, str] = {}

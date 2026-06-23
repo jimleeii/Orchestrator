@@ -34,6 +34,7 @@ def _write_legacy_fallback_artifact(wiki_root: str, stem: str, content: str) -> 
 
 
 DEFAULT_SKILL_HINTS = (
+    "contract-validator",
     "prompt-optimizer",
     "verification-before-completion",
     "requesting-code-review",

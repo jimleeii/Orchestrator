@@ -918,9 +918,19 @@ def _run_log_command(
     context: Optional[Dict[str, Any]] = None,
     allow_placeholders: bool = False,
 ):
-    script = repo_root / 'scripts' / 'log_prompt.py'
-    if not script.exists():
-        raise FileNotFoundError(f"log_prompt.py not found at expected location: {script}")
+    # Try multiple locations to support both repository layout and packaged layout used in CI/tests
+    candidates = [
+        repo_root / 'scripts' / 'log_prompt.py',
+        repo_root / '.github' / 'agents' / 'Orchestrator' / 'scripts' / 'log_prompt.py',
+        Path(__file__).resolve().parents[1] / 'scripts' / 'log_prompt.py',
+    ]
+    script = None
+    for c in candidates:
+        if c.exists():
+            script = c
+            break
+    if script is None:
+        raise FileNotFoundError(f"log_prompt.py not found at expected locations: {candidates}")
     payload = json.dumps(context, ensure_ascii=False) if context is not None else message
     cmd = [sys.executable, str(script), command, payload]
     if author:
@@ -1020,7 +1030,8 @@ def _run_synthesize_wiki(repo_root: Path, target_root: Optional[Path] = None, pr
                                 if log_enabled:
                                     try:
                                         with (log_path).open('a', encoding='utf-8') as handle:
-                                            handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} START sync rc={rc} cmd={' '.join(cmd)} out={str(log_file) if fh else 'none'}\n")
+                                            # Include pid field even for sync runs to keep log format consistent
+                                            handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} START pid=0 sync rc={rc} cmd={' '.join(cmd)} out={str(log_file) if fh else 'none'}\n")
                                     except Exception:
                                         pass
                                 try:
@@ -1093,7 +1104,8 @@ def _run_synthesize_wiki(repo_root: Path, target_root: Optional[Path] = None, pr
                             if log_enabled:
                                 try:
                                     with (log_path).open('a', encoding='utf-8') as handle:
-                                        handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} START sync rc={rc} cmd={' '.join(cmd)}\n")
+                                        # Include pid field to match background-run log format
+                                        handle.write(f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat()} START pid=0 sync rc={rc} cmd={' '.join(cmd)}\n")
                                 except Exception:
                                     pass
                             return

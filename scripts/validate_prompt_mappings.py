@@ -84,8 +84,20 @@ def validate_manifest(repo_root: Path) -> list[str]:
                 break
 
         if prompt_path is None:
-            errors.append(f'{command}: prompt file missing: .github/prompts/{spec.prompt_file}')
-            continue
+            # As a fallback, look for the prompt file inside any Orchestrator
+            # subfolder under the provided repo_root (packaged layout).
+            for orch in repo_root.glob('**/Orchestrator'):
+                for candidate_dir in (orch / '.github' / 'prompts', orch / 'prompts'):
+                    candidate = candidate_dir / spec.prompt_file
+                    if candidate.exists():
+                        prompt_path = candidate
+                        break
+                if prompt_path:
+                    break
+
+            if prompt_path is None:
+                errors.append(f'{command}: prompt file missing: .github/prompts/{spec.prompt_file}')
+                continue
 
         previous = referenced.get(spec.prompt_file)
         if previous and previous != command:

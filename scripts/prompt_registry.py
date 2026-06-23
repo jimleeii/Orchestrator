@@ -29,7 +29,15 @@ class PromptCommandSpec:
     notes: str = ''
 
     def to_manifest_record(self, repo_root: Path | None = None) -> dict[str, Any]:
-        prompt_path = repo_root / PROMPTS_DIR / self.prompt_file if repo_root and self.prompt_file else None
+        prompt_path = None
+        if repo_root and self.prompt_file:
+            # Check both packaged `.github/prompts` and top-level `prompts/` locations
+            candidate1 = repo_root / PROMPTS_DIR / self.prompt_file
+            candidate2 = repo_root / Path('prompts') / self.prompt_file
+            if candidate1.exists():
+                prompt_path = candidate1
+            elif candidate2.exists():
+                prompt_path = candidate2
         record = asdict(self)
         record['prompt_path'] = str(prompt_path.relative_to(repo_root)) if prompt_path and repo_root else (
             str(PROMPTS_DIR / self.prompt_file) if self.prompt_file else None
@@ -225,6 +233,15 @@ PROMPT_COMMANDS: dict[str, PromptCommandSpec] = {
         category='alias',
         alias_for='/patterns-log',
     ),
+    '/follow-plan': PromptCommandSpec(
+        command='/follow-plan',
+        description='System prompt snippet for follow-plan execution mode (not an append command).',
+        prompt_file='follow-plan.prompt.md',
+        targets=(),
+        supports_log_append=False,
+        category='internal',
+        notes='Provides system prompt snippets for follow-plan execution; not intended as a user slash command.',
+    ),
 }
 
 
@@ -262,6 +279,17 @@ def discover_prompt_files(repo_root: Path) -> list[str]:
     (when the Orchestrator is packaged as a subfolder) or under `prompts/` at the
     repository root. This helper checks both locations and returns the union.
     """
+    # Prefer an Orchestrator subfolder's prompts directory if present anywhere
+    # under the provided repo_root. This avoids accidentally discovering prompts
+    # from other sibling projects when the caller passed an ancestor path.
+    orch_matches = list(repo_root.glob('**/Orchestrator'))
+    for orch in orch_matches:
+        orch_prompts = orch / 'prompts'
+        orch_github_prompts = orch / '.github' / 'prompts'
+        for pdir in (orch_github_prompts, orch_prompts):
+            if pdir.exists():
+                return sorted({p.name for p in pdir.glob('*.prompt.md')})
+
     # Search upwards from the provided repo_root to find the first directory that
     # contains prompt templates. This supports both repository layouts where the
     # Orchestrator is nested under `.github/agents/Orchestrator` and layouts where
